@@ -3,14 +3,14 @@ PRISM — Sustainability MCDM Assessment Tool
 Streamlit implementation
 
 Levels:
-  1. System definition (processes, categories, units, indicator values — including
-                         optional user-defined custom indicators per category)
+  1. System definition (processes, categories, custom indicators, units, indicator values)
   1.5 Correlation check (within-category Spearman correlation review, informational)
   2. Indicator processing (MEREC normalisation/weights, N2 normalisation, category scores)
   3. Decision aggregation (Equal/Entropy/CRITIC weighting + RCW consolidation,
                             TOPSIS/VIKOR/ELECTRE I/MULTIMOORA/WASPAS, PSI compromise ranking,
-                            and a category-combination rank-stability scatter across the
-                            full PSI p range, with an interactive p slider)
+                            category-combination rank-stability scatter)
+  4. Optional validation: weighting-method sensitivity, benefit/cost indicator
+     sensitivity, Monte Carlo Dirichlet uncertainty.
 
 Run with:  streamlit run app.py
 """
@@ -22,16 +22,16 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.stats import spearmanr
 
-st.set_page_config(page_title="PRISM — Sustainability MCDM Tool", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="PRISM - Sustainability MCDM Tool", page_icon=":compass:", layout="wide")
 
 PROC_COLORS = ["#2563EB", "#16A34A", "#EA580C", "#9333EA", "#0891B2",
                "#CA8A04", "#DB2777", "#4F46E5", "#65A30D", "#DC2626"]
 
+CATEGORY_ORDER = ["env", "eco", "soc", "qua", "pro"]
+
 CATS = {
     "env": {
-        "label": "Environmental",
-        "color": "#0F6E56",
-        "bg": "#E1F5EE",
+        "label": "Environmental", "color": "#0F6E56", "bg": "#E1F5EE",
         "indicators": ["Cumulative energy demand", "CO2 emissions", "Water consumption"],
         "default_units": ["MJ", "kg CO2-eq", "L"],
         "unit_options": [
@@ -42,36 +42,30 @@ CATS = {
         "benefit": [False, False, False],
     },
     "eco": {
-        "label": "Economic",
-        "color": "#185FA5",
-        "bg": "#E6F1FB",
+        "label": "Economic", "color": "#185FA5", "bg": "#E6F1FB",
         "indicators": ["Material cost", "Machine cost", "Labour cost", "Consumables cost"],
-        "default_units": ["£/part", "£/part", "£/part", "£/part"],
+        "default_units": ["GBP/part", "GBP/part", "GBP/part", "GBP/part"],
         "unit_options": [
-            ["£/part", "$/part", "€/part", "£/kg", "$/kg"],
-            ["£/part", "$/part", "€/part", "£/hr", "$/hr"],
-            ["£/part", "$/part", "€/part", "£/hr", "$/hr"],
-            ["£/part", "$/part", "€/part"],
+            ["GBP/part", "USD/part", "EUR/part", "GBP/kg", "USD/kg"],
+            ["GBP/part", "USD/part", "EUR/part", "GBP/hr", "USD/hr"],
+            ["GBP/part", "USD/part", "EUR/part", "GBP/hr", "USD/hr"],
+            ["GBP/part", "USD/part", "EUR/part"],
         ],
         "benefit": [False, False, False, False],
     },
     "soc": {
-        "label": "Social",
-        "color": "#534AB7",
-        "bg": "#EEEDFE",
+        "label": "Social", "color": "#534AB7", "bg": "#EEEDFE",
         "indicators": ["Recordable injury rate", "Job satisfaction", "Toxicity potential"],
-        "default_units": ["per 100 workers", "score (1-10)", "CTUh"],
+        "default_units": ["per 100 workers", "GBP/year", "kg-1,4-DCB"],
         "unit_options": [
             ["per 100 workers", "per 200,000 hrs", "TRIR"],
-            ["score (1-10)", "score (1-5)", "index"],
-            ["CTUh", "DALYs", "cases/yr"],
+            ["GBP/year", "USD/year", "EUR/year", "score (1-10)", "score (1-5)"],
+            ["kg-1,4-DCB", "CTUh", "DALYs", "cases/yr"],
         ],
         "benefit": [False, True, False],
     },
     "qua": {
-        "label": "Quality",
-        "color": "#854F0B",
-        "bg": "#FAEEDA",
+        "label": "Quality", "color": "#854F0B", "bg": "#FAEEDA",
         "indicators": ["Tensile strength", "Yield strength", "% elongation"],
         "default_units": ["MPa", "MPa", "%"],
         "unit_options": [
@@ -82,19 +76,20 @@ CATS = {
         "benefit": [True, True, True],
     },
     "pro": {
-        "label": "Productivity",
-        "color": "#993C1D",
-        "bg": "#FAECE7",
+        "label": "Productivity", "color": "#993C1D", "bg": "#FAECE7",
         "indicators": ["Total production time", "Material utilisation rate"],
         "default_units": ["hrs", "%"],
-        "unit_options": [
-            ["hrs", "min", "days", "s"],
-            ["%", "ratio", "g/g"],
-        ],
+        "unit_options": [["hrs", "min", "days", "s"], ["%", "ratio", "g/g"]],
         "benefit": [False, True],
     },
 }
 
+CUSTOM_SENTINEL = "Custom..."
+
+
+# ============================================================================
+# CORE MATH
+# ============================================================================
 
 def merec_norm(vals, benefit):
     vals = np.asarray(vals, dtype=float)
@@ -269,6 +264,15 @@ METHOD_LABELS = {
     "topsis": "TOPSIS", "vikor": "VIKOR", "electre": "ELECTRE I",
     "multimoora": "MULTIMOORA", "waspas": "WASPAS",
 }
+ALL_MCDM_KEYS = ["topsis", "vikor", "electre", "multimoora", "waspas"]
+WEIGHT_COMBO_SETS = [
+    (("equal",), "Equal"),
+    (("entropy",), "Entropy"),
+    (("critic",), "CRITIC"),
+    (("equal", "entropy"), "RCW(Eq+En)"),
+    (("equal", "critic"), "RCW(Eq+Cr)"),
+    (("entropy", "critic"), "RCW(En+Cr)"),
+]
 
 
 def calc_psi(method_ranks, methods, p):
@@ -298,11 +302,47 @@ def get_category_weights(mat, weight_methods):
     return rcw_consolidate(sets) if len(sets) > 1 else sets[0]
 
 
+def run_mcdm_suite(weighted_mat, weights, methods):
+    ranks = {}
+    for m in methods:
+        ranks[m] = MCDM_FUNCS[m](weighted_mat, weights)
+    return ranks
+
+
+def get_combinations(cats_list):
+    order_index = {c: i for i, c in enumerate(CATEGORY_ORDER)}
+    cats_sorted = sorted(cats_list, key=lambda c: order_index[c])
+    combos = []
+    for r in range(1, len(cats_sorted) + 1):
+        combos.extend(itertools.combinations(cats_sorted, r))
+    combos.sort(key=lambda c: (len(c), [order_index[x] for x in c]))
+    return [list(c) for c in combos]
+
+
+def compute_dirichlet_k(mat):
+    k_cat = mat.shape[0]
+    w_eq = np.full(k_cat, 1.0 / k_cat)
+    w_en = entropy_weights(mat)
+    w_cr = critic_weights(mat)
+    W = np.array([w_eq, w_en, w_cr])
+    n_methods = 3
+    var_per_cat = W.var(axis=0, ddof=0)
+    mean_var = var_per_cat.mean()
+    max_var = ((n_methods - 1) * (1 / n_methods) ** 2 + (1 - 1 / n_methods) ** 2) / n_methods
+    dispersion_ratio = min(mean_var / max_var, 1.0) if max_var > 0 else 0.0
+    agreement = 1 - dispersion_ratio
+    return agreement * 100, w_eq, w_en, w_cr
+
+
+# ============================================================================
+# SESSION STATE
+# ============================================================================
+
 def init_state():
     defaults = {
         "step": 1,
         "n_proc": 3,
-        "proc_names": ["CM", "WAAM", "SAM"],
+        "proc_names": [],
         "sel_cats": set(),
         "sel_units": {},
         "indicator_values": {},
@@ -314,6 +354,7 @@ def init_state():
         "sel_mcdm_methods": set(),
         "computed": False,
         "corr_acknowledged": False,
+        "validation_choice": "None - skip validation",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -329,50 +370,87 @@ def reset_all():
 init_state()
 
 
+def ordered_sel_cats():
+    return [c for c in CATEGORY_ORDER if c in st.session_state.sel_cats]
+
+
+def ordered_l3_cats():
+    return [c for c in CATEGORY_ORDER if c in st.session_state.l3_cats]
+
+
 def get_full_indicators(ckey):
     cat = CATS[ckey]
     names = list(cat["indicators"])
     units = [st.session_state.sel_units.get(f"{ckey}_{j}", cat["default_units"][j])
              for j in range(len(cat["indicators"]))]
     benefits = list(cat["benefit"])
-
     n_custom = st.session_state.custom_indicator_counts.get(ckey, 0)
     for ci in range(n_custom):
         info = st.session_state.custom_indicators.get((ckey, ci), {})
         names.append(info.get("name") or f"Custom indicator {ci+1}")
         units.append(info.get("unit") or "unit")
         benefits.append(info.get("benefit", True))
-
     return names, units, benefits
+
+
+def get_raw_matrix(ckey):
+    names, units, benefits = get_full_indicators(ckey)
+    n_proc = st.session_state.n_proc
+    raw = np.zeros((len(names), n_proc))
+    for j in range(len(names)):
+        for pi in range(n_proc):
+            raw[j, pi] = st.session_state.indicator_values.get((ckey, j, pi), 0.0)
+    return raw, benefits
+
+
+def compute_category_score_from_raw(ckey, raw_override=None):
+    names, units, benefits = get_full_indicators(ckey)
+    n_ind = len(names)
+    if raw_override is not None:
+        raw = raw_override
+    else:
+        raw, _ = get_raw_matrix(ckey)
+    nm = np.zeros_like(raw)
+    n2 = np.zeros_like(raw)
+    for j in range(n_ind):
+        nm[j] = merec_norm(raw[j], benefits[j])
+        n2[j] = n2_norm(raw[j], benefits[j])
+    w = merec_weights(nm)
+    score = (n2 * w[:, None]).sum(axis=0)
+    return score
 
 
 STEP_LABELS = [
     "1. Processes", "2. Categories", "3. Custom indicators", "4. Units",
-    "5. Indicators", "6. Correlation check", "7. Norm & MEREC",
+    "5. Indicators", "6. Correlation check", "7. MEREC weights",
     "8. Category scores", "9. Level 3 categories", "10. Category weights",
-    "11. MCDM methods", "12. Results",
+    "11. MCDM methods", "12. Results", "13. Validation (optional)",
 ]
 
 with st.sidebar:
-    st.title("🧭 PRISM")
+    st.title(":compass: PRISM")
     st.caption("Sustainability MCDM Assessment Tool")
     st.divider()
     for i, label in enumerate(STEP_LABELS, start=1):
         if i < st.session_state.step:
-            st.success(label, icon="✅")
+            st.success(label, icon=":white_check_mark:")
         elif i == st.session_state.step:
-            st.info(label, icon="➡️")
+            st.info(label, icon=":arrow_right:")
         else:
             st.text(label)
     st.divider()
-    if st.button("↺ Reset everything", use_container_width=True):
+    if st.button("Reset everything", use_container_width=True):
         reset_all()
         st.rerun()
 
 
+# ============================================================================
+# STEP 1 - PROCESSES (FIX 1: no example names pre-filled)
+# ============================================================================
+
 def step1():
-    st.header("Step 1 — Define processes")
-    st.caption("How many manufacturing processes are you comparing? (2–10)")
+    st.header("Step 1 - Define processes")
+    st.caption("How many manufacturing processes are you comparing? (2-10)")
 
     n = st.slider("Number of processes", min_value=2, max_value=10,
                    value=st.session_state.n_proc, key="n_proc_slider")
@@ -380,7 +458,7 @@ def step1():
 
     names = st.session_state.proc_names
     if len(names) < n:
-        names += [f"P{i+1}" for i in range(len(names), n)]
+        names = names + [""] * (n - len(names))
     elif len(names) > n:
         names = names[:n]
     st.session_state.proc_names = names
@@ -390,23 +468,28 @@ def step1():
     new_names = []
     for i in range(n):
         with cols[i % len(cols)]:
-            val = st.text_input(f"Process {i+1}", value=names[i], key=f"pname_{i}")
-            new_names.append(val.strip() or f"P{i+1}")
+            val = st.text_input(f"Process {i+1}", value=names[i], key=f"pname_{i}",
+                                 placeholder="enter name")
+            new_names.append(val.strip())
     st.session_state.proc_names = new_names
 
     st.divider()
-    if st.button("Next →", type="primary"):
+    if st.button("Next ->", type="primary"):
+        final_names = [n.strip() if n.strip() else f"P{i+1}" for i, n in enumerate(new_names)]
+        st.session_state.proc_names = final_names
         st.session_state.step = 2
         st.rerun()
 
 
 def step2():
-    st.header("Step 2 — Select assessment categories")
+    st.header("Step 2 - Select assessment categories")
     st.caption("Choose one or more categories to include in the analysis")
 
+    icons = {"env": ":herb:", "eco": ":coin:", "soc": ":busts_in_silhouette:",
+             "qua": ":medal:", "pro": ":zap:"}
     cols = st.columns(5)
-    icons = {"env": "🌿", "eco": "💰", "soc": "👥", "qua": "🏅", "pro": "⚡"}
-    for i, (key, cat) in enumerate(CATS.items()):
+    for i, key in enumerate(CATEGORY_ORDER):
+        cat = CATS[key]
         with cols[i]:
             checked = key in st.session_state.sel_cats
             new_val = st.checkbox(f"{icons[key]} {cat['label']}", value=checked, key=f"catchk_{key}")
@@ -418,11 +501,11 @@ def step2():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 1
             st.rerun()
     with c2:
-        if st.button("Next →", type="primary"):
+        if st.button("Next ->", type="primary"):
             if not st.session_state.sel_cats:
                 st.error("Select at least one category.")
             else:
@@ -431,7 +514,7 @@ def step2():
 
 
 def step3():
-    st.header("Step 3 — Add custom indicators (optional)")
+    st.header("Step 3 - Add custom indicators (optional)")
     st.caption("Besides the predefined indicators, you can add your own to any selected category.")
 
     use_custom = st.radio(
@@ -445,8 +528,9 @@ def step3():
     if st.session_state.use_custom_indicators:
         st.divider()
         st.subheader("How many custom indicators per category?")
-        cols = st.columns(len(st.session_state.sel_cats))
-        for i, ckey in enumerate(st.session_state.sel_cats):
+        cats = ordered_sel_cats()
+        cols = st.columns(len(cats))
+        for i, ckey in enumerate(cats):
             cat = CATS[ckey]
             with cols[i]:
                 cnt = st.number_input(
@@ -460,7 +544,7 @@ def step3():
         if any_custom:
             st.divider()
             st.subheader("Define each custom indicator")
-            for ckey in st.session_state.sel_cats:
+            for ckey in cats:
                 n_custom = st.session_state.custom_indicator_counts.get(ckey, 0)
                 if n_custom == 0:
                     continue
@@ -486,8 +570,7 @@ def step3():
                             key=f"custben_{ckey}_{ci}",
                         )
                     st.session_state.custom_indicators[(ckey, ci)] = {
-                        "name": name.strip(),
-                        "unit": unit.strip() or "unit",
+                        "name": name.strip(), "unit": unit.strip() or "unit",
                         "benefit": benefit.startswith("Benefit"),
                     }
                 st.write("")
@@ -495,61 +578,79 @@ def step3():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 2
             st.rerun()
     with c2:
-        if st.button("Next →", type="primary"):
+        if st.button("Next ->", type="primary"):
             st.session_state.step = 4
             st.rerun()
 
 
 def step4():
-    st.header("Step 4 — Select units for predefined indicators")
-    st.caption("Choose a preset unit or type a custom one. (Custom indicator units were set in Step 3.)")
+    st.header("Step 4 - Select units for predefined indicators")
+    st.caption('Choose a preset unit from the dropdown, or pick "Custom..." to type your own.')
 
-    for ckey in st.session_state.sel_cats:
+    for ckey in ordered_sel_cats():
         cat = CATS[ckey]
         st.markdown(f"**{cat['label']}**")
         for j, ind in enumerate(cat["indicators"]):
             key = f"{ckey}_{j}"
-            default_unit = st.session_state.sel_units.get(key, cat["default_units"][j])
-            options = cat["unit_options"][j]
-            display_options = options if default_unit in options else options + [default_unit]
+            current = st.session_state.sel_units.get(key, cat["default_units"][j])
+            options = list(cat["unit_options"][j])
+            is_preset = current in options
+            display_options = options + [CUSTOM_SENTINEL]
+            default_index = options.index(current) if is_preset else len(options)
 
-            c1, c2 = st.columns([2, 1])
+            c1, c2, c3 = st.columns([2, 1.3, 1.3])
             with c1:
                 st.text(ind)
             with c2:
                 chosen = st.selectbox(
-                    "unit", display_options,
-                    index=display_options.index(default_unit),
+                    "unit", display_options, index=default_index,
                     key=f"unitsel_{key}", label_visibility="collapsed",
                 )
-            custom = st.text_input("custom unit (optional)", value="", key=f"unitcustom_{key}",
-                                    placeholder="type to override")
-            final_unit = custom.strip() if custom.strip() else chosen
+            with c3:
+                if chosen == CUSTOM_SENTINEL:
+                    custom_val = st.text_input(
+                        "custom unit", value=current if not is_preset else "",
+                        key=f"unitcustom_{key}", label_visibility="collapsed",
+                        placeholder="type unit",
+                    )
+                    final_unit = custom_val.strip() or "unit"
+                else:
+                    final_unit = chosen
+                    st.caption(" ")
             st.session_state.sel_units[key] = final_unit
         st.divider()
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 3
             st.rerun()
     with c2:
-        if st.button("Next →", type="primary"):
+        if st.button("Next ->", type="primary"):
             st.session_state.step = 5
             st.rerun()
 
 
+# ============================================================================
+# STEP 5 - INDICATOR VALUES
+# FIX 2: values no longer reset to zero. The data_editor's own widget state
+# (keyed per category, in st.session_state[editor_key]) is the single
+# source of truth across reruns. We only build a seed DataFrame the FIRST
+# time the key appears in session_state; on every subsequent rerun
+# Streamlit reuses the live widget state instead of overwriting it.
+# ============================================================================
+
 def step5():
-    st.header("Step 5 — Enter indicator values")
+    st.header("Step 5 - Enter indicator values")
     st.caption("Fill in measured values for each process")
 
     names = st.session_state.proc_names
 
-    for ckey in st.session_state.sel_cats:
+    for ckey in ordered_sel_cats():
         cat = CATS[ckey]
         ind_names, ind_units, _ = get_full_indicators(ckey)
 
@@ -560,18 +661,18 @@ def step5():
         )
 
         rows = [f"{ind_names[j]} ({ind_units[j]})" for j in range(len(ind_names))]
+        editor_key = f"editor_{ckey}"
 
-        existing = {}
-        for j in range(len(ind_names)):
-            for pi in range(len(names)):
-                k = (ckey, j, pi)
-                existing[k] = st.session_state.indicator_values.get(k, 0.0)
+        seed = [[st.session_state.indicator_values.get((ckey, j, pi), 0.0)
+                  for pi in range(len(names))] for j in range(len(ind_names))]
+        df_seed = pd.DataFrame(seed, index=rows, columns=names)
 
-        df = pd.DataFrame(
-            [[existing[(ckey, j, pi)] for pi in range(len(names))] for j in range(len(ind_names))],
-            index=rows, columns=names,
-        )
-        edited = st.data_editor(df, key=f"editor_{ckey}", use_container_width=True)
+        # Passing the seed DataFrame is safe even on reruns: Streamlit's
+        # data_editor only uses `value` to initialise a NEW widget. Once
+        # `editor_key` exists in session_state, Streamlit ignores `value`
+        # entirely and serves the live edited state instead, so user edits
+        # are preserved across reruns and never reset to zero.
+        edited = st.data_editor(df_seed, key=editor_key, use_container_width=True)
 
         for j in range(len(ind_names)):
             for pi in range(len(names)):
@@ -582,11 +683,11 @@ def step5():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 4
             st.rerun()
     with c2:
-        if st.button("Next →", type="primary"):
+        if st.button("Next ->", type="primary"):
             has_values = any(v != 0 for v in st.session_state.indicator_values.values())
             if not has_values:
                 st.error("Enter at least some values before proceeding.")
@@ -597,18 +698,17 @@ def step5():
 
 
 def step6():
-    st.header("Step 6 — Within-category correlation check")
+    st.header("Step 6 - Within-category correlation check")
     st.caption(
         "Spearman's rank correlation between indicators within each category. "
-        "This is informational only — no indicators are removed. Pairs with "
-        "|rho| > 0.8 are flagged as highly correlated."
+        "Informational only - no indicators are removed. Pairs with |rho| > 0.8 are flagged."
     )
 
     names = st.session_state.proc_names
     n_proc = len(names)
     flagged_any = False
 
-    for ckey in st.session_state.sel_cats:
+    for ckey in ordered_sel_cats():
         cat = CATS[ckey]
         ind_names, _, _ = get_full_indicators(ckey)
         n_ind = len(ind_names)
@@ -620,10 +720,9 @@ def step6():
         )
 
         if n_ind < 2:
-            st.caption("Only one indicator in this category — correlation not applicable.")
+            st.caption("Only one indicator in this category - correlation not applicable.")
             st.write("")
             continue
-
         if n_proc < 3:
             st.caption("Need at least 3 processes for a meaningful Spearman correlation. Skipped.")
             st.write("")
@@ -667,18 +766,17 @@ def step6():
     if flagged_any:
         st.info(
             "Highly correlated indicator pairs were found. This is shown for your "
-            "awareness — both indicators remain in the analysis. MEREC weighting "
-            "will naturally account for redundant information when computing weights."
+            "awareness - both indicators remain in the analysis."
         )
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 5
             st.rerun()
     with c2:
-        if st.button("Accept and proceed →", type="primary"):
+        if st.button("Accept and proceed ->", type="primary"):
             st.session_state.corr_acknowledged = True
             compute_level2()
             st.session_state.step = 7
@@ -689,7 +787,7 @@ def compute_level2():
     n_proc = st.session_state.n_proc
     nm_data, n2_data, merec_w, cat_scores = {}, {}, {}, {}
 
-    for ckey in st.session_state.sel_cats:
+    for ckey in ordered_sel_cats():
         ind_names, ind_units, benefits = get_full_indicators(ckey)
         n_ind = len(ind_names)
 
@@ -719,17 +817,20 @@ def compute_level2():
     st.session_state.computed = True
 
 
-def step7():
-    st.header("Step 7 — Normalisation & MEREC weights")
-    st.caption("MEREC norm: benefit = min/x · cost = x/max  |  "
-               "N2: benefit = x/sum(x) · cost = (1/x)/sum(1/x)")
+# ============================================================================
+# STEP 7 - MEREC WEIGHTS
+# FIX 4: only the single, final MEREC weight column is shown; per-process
+# intermediate normalisation columns are no longer displayed.
+# ============================================================================
 
-    names = st.session_state.proc_names
-    for ckey in st.session_state.sel_cats:
+def step7():
+    st.header("Step 7 - MEREC weights")
+    st.caption("MEREC weight per indicator, computed from MEREC normalisation "
+               "(benefit = min/x, cost = x/max) via the standard removal-effect formula.")
+
+    for ckey in ordered_sel_cats():
         cat = CATS[ckey]
         ind_names, ind_units, _ = get_full_indicators(ckey)
-        nm = st.session_state.nm_data[ckey]
-        n2 = st.session_state.n2_data[ckey]
         w = st.session_state.merec_w[ckey]
 
         st.markdown(
@@ -738,40 +839,29 @@ def step7():
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
-        cols = ["Indicator"]
-        for p in names:
-            cols += [f"{p} (MEREC n)", f"{p} (N2)"]
-        cols.append("MEREC weight")
-
-        rows = []
-        for j, ind in enumerate(ind_names):
-            row = [ind]
-            for pi in range(len(names)):
-                row += [round(nm[j, pi], 4), round(n2[j, pi], 4)]
-            row.append(round(w[j], 4))
-            rows.append(row)
-
-        st.dataframe(pd.DataFrame(rows, columns=cols), use_container_width=True, hide_index=True)
+        rows = [[ind, round(w[j], 4)] for j, ind in enumerate(ind_names)]
+        st.dataframe(pd.DataFrame(rows, columns=["Indicator", "MEREC weight"]),
+                     use_container_width=True, hide_index=True)
         st.write("")
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 6
             st.rerun()
     with c2:
-        if st.button("View category scores →", type="primary"):
+        if st.button("View category scores ->", type="primary"):
             st.session_state.step = 8
             st.rerun()
 
 
 def step8():
-    st.header("Step 8 — Category scores")
-    st.caption("Score = Σ(N2 normalised value × MEREC weight). Higher = better.")
+    st.header("Step 8 - Category scores")
+    st.caption("Score = sum(N2 normalised value x MEREC weight). Higher = better.")
 
     names = st.session_state.proc_names
-    for ckey in st.session_state.sel_cats:
+    for ckey in ordered_sel_cats():
         cat = CATS[ckey]
         scores = st.session_state.cat_scores[ckey]
 
@@ -782,8 +872,7 @@ def step8():
         )
 
         fig = go.Figure(go.Bar(
-            x=scores, y=names, orientation="h",
-            marker_color=cat["color"],
+            x=scores, y=names, orientation="h", marker_color=cat["color"],
             text=[f"{s:.4f}" for s in scores], textposition="outside",
         ))
         fig.update_layout(height=120 + 30 * len(names), margin=dict(l=10, r=10, t=10, b=10),
@@ -793,21 +882,22 @@ def step8():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 7
             st.rerun()
     with c2:
-        if st.button("Select for Level 3 →", type="primary"):
+        if st.button("Select for Level 3 ->", type="primary"):
             st.session_state.step = 9
             st.rerun()
 
 
 def step9():
-    st.header("Step 9 — Select categories for Level 3")
+    st.header("Step 9 - Select categories for Level 3")
     st.caption("Choose which category scores to carry into the MCDM aggregation")
 
-    cols = st.columns(len(st.session_state.sel_cats))
-    for i, ckey in enumerate(st.session_state.sel_cats):
+    cats = ordered_sel_cats()
+    cols = st.columns(len(cats))
+    for i, ckey in enumerate(cats):
         cat = CATS[ckey]
         with cols[i]:
             checked = ckey in st.session_state.l3_cats
@@ -820,11 +910,11 @@ def step9():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 8
             st.rerun()
     with c2:
-        if st.button("Level 3 →", type="primary"):
+        if st.button("Level 3 ->", type="primary"):
             if not st.session_state.l3_cats:
                 st.error("Select at least one category.")
             else:
@@ -833,7 +923,7 @@ def step9():
 
 
 def step10():
-    st.header("Step 10 — Category weighting methods")
+    st.header("Step 10 - Category weighting methods")
     st.caption("Select one or more. Multiple selections trigger RCW consolidation automatically.")
 
     options = {"equal": "Equal weights", "entropy": "Entropy weights", "critic": "CRITIC weights"}
@@ -846,7 +936,7 @@ def step10():
             st.session_state.sel_weight_methods.discard(key)
 
     if st.session_state.sel_weight_methods:
-        l3_cats = list(st.session_state.l3_cats)
+        l3_cats = ordered_l3_cats()
         mat = np.array([st.session_state.cat_scores[c] for c in l3_cats])
         k = len(l3_cats)
 
@@ -862,7 +952,7 @@ def step10():
         st.session_state.final_cat_weights = final_w
 
         if len(sets) > 1:
-            st.info("Multiple methods selected — RCW consolidation applied automatically.")
+            st.info("Multiple methods selected - RCW consolidation applied automatically.")
 
         rows = []
         for i, ckey in enumerate(l3_cats):
@@ -877,11 +967,11 @@ def step10():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 9
             st.rerun()
     with c2:
-        if st.button("Select MCDM →", type="primary"):
+        if st.button("Select MCDM ->", type="primary"):
             if not st.session_state.sel_weight_methods:
                 st.error("Select at least one weighting method.")
             else:
@@ -890,15 +980,15 @@ def step10():
 
 
 def step11():
-    st.header("Step 11 — Select MCDM methods")
+    st.header("Step 11 - Select MCDM methods")
     st.caption("Select one or more. Multiple selections apply PSI compromise ranking.")
 
     options = {
-        "topsis": "TOPSIS — Closest to ideal solution",
-        "vikor": "VIKOR — Maximum group utility",
-        "electre": "ELECTRE I — Outranking / dominance",
-        "multimoora": "MULTIMOORA — Three subordinate rankings",
-        "waspas": "WASPAS — Weighted sum-product aggregation",
+        "topsis": "TOPSIS - Closest to ideal solution",
+        "vikor": "VIKOR - Maximum group utility",
+        "electre": "ELECTRE I - Outranking / dominance",
+        "multimoora": "MULTIMOORA - Three subordinate rankings",
+        "waspas": "WASPAS - Weighted sum-product aggregation",
     }
     for key, label in options.items():
         checked = key in st.session_state.sel_mcdm_methods
@@ -911,11 +1001,11 @@ def step11():
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
+        if st.button("<- Back"):
             st.session_state.step = 10
             st.rerun()
     with c2:
-        if st.button("Calculate results →", type="primary"):
+        if st.button("Calculate results ->", type="primary"):
             if not st.session_state.sel_mcdm_methods:
                 st.error("Select at least one MCDM method.")
             else:
@@ -923,27 +1013,17 @@ def step11():
                 st.rerun()
 
 
-def get_combinations(cats_list):
-    combos = []
-    for r in range(1, len(cats_list) + 1):
-        combos.extend(itertools.combinations(cats_list, r))
-    combos.sort(key=lambda c: (len(c), "".join(c)))
-    return [list(c) for c in combos]
-
-
-def run_mcdm_suite(weighted_mat, weights, methods):
-    ranks = {}
-    for m in methods:
-        ranks[m] = MCDM_FUNCS[m](weighted_mat, weights)
-    return ranks
-
+# ============================================================================
+# STEP 12 - RESULTS
+# FIX 5: combination chart x-axis labels are HORIZONTAL (tickangle=0).
+# ============================================================================
 
 def step12():
-    st.header("Step 12 — Results")
+    st.header("Step 12 - Results")
 
     names = st.session_state.proc_names
     n_proc = len(names)
-    l3_cats = list(st.session_state.l3_cats)
+    l3_cats = ordered_l3_cats()
     final_w = st.session_state.final_cat_weights
     cat_scores = st.session_state.cat_scores
     methods = list(st.session_state.sel_mcdm_methods)
@@ -951,6 +1031,7 @@ def step12():
 
     weighted_mat = np.array([cat_scores[c] * final_w[i] for i, c in enumerate(l3_cats)])
     method_ranks = run_mcdm_suite(weighted_mat, final_w, methods)
+    st.session_state.last_method_ranks = method_ranks
 
     st.subheader("MCDM rankings")
     st.caption("Rank 1 = best performing process. Equal scores receive equal (tied) ranks.")
@@ -973,7 +1054,7 @@ def step12():
     if multi:
         st.divider()
         st.subheader("PSI curve")
-        st.caption("PSI_i = M_i^p x A_i^(1-p)  ·  M_i = 1/Rbar  ·  A_i = 1/(1+CV)  ·  p in (0,1)")
+        st.caption("PSI_i = M_i^p x A_i^(1-p)  ;  M_i = 1/Rbar  ;  A_i = 1/(1+CV)  ;  p in (0,1)")
 
         p_val = st.slider("p (stability <-> performance)", min_value=0.01, max_value=0.99,
                            value=0.5, step=0.01, key="psi_p_slider")
@@ -1002,39 +1083,33 @@ def step12():
 
         st.divider()
         st.subheader("Ranking across category combinations")
+        n_combo = 2 ** len(l3_cats) - 1
         st.caption(
             f"For every non-empty combination of your {len(l3_cats)} selected Level 3 "
-            f"categories ({2**len(l3_cats)-1} combinations), category weights are "
-            "recomputed with your chosen weighting method(s), the selected MCDM methods "
-            "are re-run, and PSI rank is shown at the p-value you choose below. "
-            "Use the slider to see how rankings shift across the full p range."
+            f"categories ({n_combo} combinations): single-category columns show the "
+            "FIXED rank from Step 8 (no MCDM/PSI). Multi-category columns recompute "
+            "category weights, re-run the selected MCDM methods, and apply PSI at the "
+            "p-value you choose below."
         )
 
         combo_p = st.slider("p for combination view", min_value=0.0, max_value=1.0,
                              value=0.5, step=0.01, key="combo_p_slider")
 
         combos = get_combinations(l3_cats)
-        cat_initial = {}
-        used_initials = set()
-        for c in l3_cats:
-            base = CATS[c]["label"][0].upper()
-            initial = base
-            suffix = 1
-            while initial in used_initials:
-                suffix += 1
-                initial = base + str(suffix)
-            used_initials.add(initial)
-            cat_initial[c] = initial
-        combo_labels = ["".join(cat_initial[c] for c in combo) for combo in combos]
+        cat_initial = {c: CATS[c]["label"][:3] for c in l3_cats}
+        combo_labels = ["+".join(cat_initial[c] for c in combo) for combo in combos]
 
         rank_grid = np.zeros((n_proc, len(combos)), dtype=int)
         for ci, combo in enumerate(combos):
-            sub_mat = np.array([cat_scores[c] for c in combo])
-            sub_w = get_category_weights(sub_mat, st.session_state.sel_weight_methods)
-            sub_weighted = sub_mat * sub_w[:, None]
-            sub_ranks = run_mcdm_suite(sub_weighted, sub_w, methods)
-            psi_combo = calc_psi(sub_ranks, methods, combo_p)
-            rank_grid[:, ci] = rank_with_ties(psi_combo, ascending=False)
+            if len(combo) == 1:
+                rank_grid[:, ci] = rank_with_ties(cat_scores[combo[0]], ascending=False)
+            else:
+                sub_mat = np.array([cat_scores[c] for c in combo])
+                sub_w = get_category_weights(sub_mat, st.session_state.sel_weight_methods)
+                sub_weighted = sub_mat * sub_w[:, None]
+                sub_ranks = run_mcdm_suite(sub_weighted, sub_w, methods)
+                psi_combo = calc_psi(sub_ranks, methods, combo_p)
+                rank_grid[:, ci] = rank_with_ties(psi_combo, ascending=False)
 
         fig2 = go.Figure()
         for pi, name in enumerate(names):
@@ -1047,8 +1122,10 @@ def step12():
         fig2.update_layout(
             xaxis=dict(
                 tickmode="array", tickvals=list(range(len(combos))), ticktext=combo_labels,
-                tickangle=60, title="Category combination",
-                tickfont=dict(size=9),
+                tickangle=0,
+                title="Category combination",
+                tickfont=dict(size=10),
+                automargin=True,
             ),
             yaxis=dict(
                 title="Rank", autorange="reversed",
@@ -1056,33 +1133,350 @@ def step12():
                 range=[0.5, n_proc + 0.5],
             ),
             height=420,
-            margin=dict(l=10, r=10, t=10, b=10),
+            margin=dict(l=10, r=10, t=10, b=60),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-        with st.expander("Combination key"):
-            key_df = pd.DataFrame({
-                "Code": combo_labels,
-                "Categories": ["+".join(CATS[c]["label"] for c in combo) for combo in combos],
-            })
-            st.dataframe(key_df, use_container_width=True, hide_index=True)
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("<- Back"):
+            st.session_state.step = 11
+            st.rerun()
+    with c2:
+        if st.button("Validation (optional) ->", type="primary"):
+            st.session_state.step = 13
+            st.rerun()
+    with c3:
+        if st.button("Reset all"):
+            reset_all()
+            st.rerun()
+
+
+# ============================================================================
+# STEP 13 - VALIDATION (optional)
+# ============================================================================
+
+def validation_intro():
+    st.header("Step 13 - Validation (optional)")
+    st.caption("Three optional checks to stress-test how robust your ranking is.")
+
+    choice = st.radio(
+        "Choose a validation method",
+        [
+            "None - skip validation",
+            "1. Weighting-method sensitivity",
+            "2. Benefit/Cost indicator sensitivity",
+            "3. Monte Carlo uncertainty (Dirichlet)",
+        ],
+        index=0, key="validation_radio",
+    )
+    st.session_state.validation_choice = choice
+
+    if choice.startswith("1."):
+        validation_weight_sensitivity()
+    elif choice.startswith("2."):
+        validation_bc_sensitivity()
+    elif choice.startswith("3."):
+        validation_monte_carlo()
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("← Back"):
-            st.session_state.step = 11
+        if st.button("<- Back to results"):
+            st.session_state.step = 12
             st.rerun()
     with c2:
-        if st.button("↺ Reset all"):
+        if st.button("Reset all"):
             reset_all()
             st.rerun()
+
+
+def validation_weight_sensitivity():
+    st.subheader("1. Weighting-method sensitivity")
+    st.caption(
+        "MEREC weights (indicator level) are left unchanged. Only the Level 3 "
+        "category-weighting method varies across all 6 combinations: Equal, Entropy, "
+        "CRITIC, and the three pairwise RCW consolidations. For each, all 5 MCDM "
+        "methods are run and ranks are shown - no PSI, ranks only."
+    )
+
+    names = st.session_state.proc_names
+    l3_cats = ordered_l3_cats()
+    cat_scores = st.session_state.cat_scores
+    mat = np.array([cat_scores[c] for c in l3_cats])
+
+    rows = [{"Process": name} for name in names]
+    for combo_methods, combo_label in WEIGHT_COMBO_SETS:
+        w = get_category_weights(mat, set(combo_methods))
+        weighted_mat = mat * w[:, None]
+        ranks = run_mcdm_suite(weighted_mat, w, ALL_MCDM_KEYS)
+        for pi in range(len(names)):
+            for mkey in ALL_MCDM_KEYS:
+                col = f"{combo_label} - {METHOD_LABELS[mkey]}"
+                rows[pi][col] = int(ranks[mkey][pi])
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.caption(
+        "Read across each process's row: if ranks stay consistent across all 30 "
+        "columns (6 weighting schemes x 5 MCDM methods), the result is robust to "
+        "the choice of weighting method."
+    )
+
+    st.divider()
+    st.markdown("**Overall ranking across category combinations (this weighting scheme set)**")
+    st.caption(
+        "Same 2^n - 1 combination logic as Step 12, but every combination here uses "
+        "whichever weighting method(s) you toggle below, re-run through all 5 MCDM "
+        "methods and PSI at the chosen p. Single-category columns remain fixed (Step 8)."
+    )
+
+    wm_options = {"equal": "Equal", "entropy": "Entropy", "critic": "CRITIC"}
+    if "sens1_wm" not in st.session_state:
+        st.session_state.sens1_wm = set(st.session_state.sel_weight_methods) or {"equal"}
+    cols = st.columns(3)
+    for i, (k, lbl) in enumerate(wm_options.items()):
+        with cols[i]:
+            checked = k in st.session_state.sens1_wm
+            new_val = st.checkbox(lbl, value=checked, key=f"sens1wm_{k}")
+            if new_val:
+                st.session_state.sens1_wm.add(k)
+            else:
+                st.session_state.sens1_wm.discard(k)
+    if not st.session_state.sens1_wm:
+        st.session_state.sens1_wm = {"equal"}
+
+    sens1_p = st.slider("p for combination view", min_value=0.0, max_value=1.0,
+                         value=0.5, step=0.01, key="sens1_p_slider")
+
+    combos = get_combinations(l3_cats)
+    cat_initial = {c: CATS[c]["label"][:3] for c in l3_cats}
+    combo_labels = ["+".join(cat_initial[c] for c in combo) for combo in combos]
+    n_proc = len(names)
+
+    rank_grid = np.zeros((n_proc, len(combos)), dtype=int)
+    for ci, combo in enumerate(combos):
+        if len(combo) == 1:
+            rank_grid[:, ci] = rank_with_ties(cat_scores[combo[0]], ascending=False)
+        else:
+            sub_mat = np.array([cat_scores[c] for c in combo])
+            sub_w = get_category_weights(sub_mat, st.session_state.sens1_wm)
+            sub_weighted = sub_mat * sub_w[:, None]
+            sub_ranks = run_mcdm_suite(sub_weighted, sub_w, ALL_MCDM_KEYS)
+            psi_combo = calc_psi(sub_ranks, ALL_MCDM_KEYS, sens1_p)
+            rank_grid[:, ci] = rank_with_ties(psi_combo, ascending=False)
+
+    fig = go.Figure()
+    for pi, name in enumerate(names):
+        fig.add_trace(go.Scatter(
+            x=list(range(len(combos))), y=rank_grid[pi, :],
+            mode="markers", name=name,
+            marker=dict(size=11, color=PROC_COLORS[pi % len(PROC_COLORS)],
+                        symbol="square", line=dict(width=0)),
+        ))
+    fig.update_layout(
+        xaxis=dict(tickmode="array", tickvals=list(range(len(combos))), ticktext=combo_labels,
+                   tickangle=0, title="Category combination", tickfont=dict(size=10),
+                   automargin=True),
+        yaxis=dict(title="Rank", autorange="reversed", dtick=1, tick0=1, range=[0.5, n_proc + 0.5]),
+        height=420, margin=dict(l=10, r=10, t=10, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def validation_bc_sensitivity():
+    st.subheader("2. Benefit/Cost indicator sensitivity")
+    st.caption(
+        "All benefit-type indicators are perturbed by one %, and all cost-type "
+        "indicators by another % - applied simultaneously, across all processes, "
+        "within your selected Level 3 categories. The full pipeline (MEREC -> N2 -> "
+        "category score -> weighting -> RCW -> 5 MCDM -> PSI) re-runs at a chosen p."
+    )
+
+    l3_cats = ordered_l3_cats()
+    names = st.session_state.proc_names
+    sel_weight_methods = st.session_state.sel_weight_methods
+    sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+    method_ranks = st.session_state.get("last_method_ranks", {})
+
+    c1, c2 = st.columns(2)
+    with c1:
+        ben_pct = st.slider("Benefit-type indicators (%)", min_value=-25, max_value=25,
+                             value=0, step=5, key="bc_ben_slider")
+    with c2:
+        cost_pct = st.slider("Cost-type indicators (%)", min_value=-25, max_value=25,
+                              value=0, step=5, key="bc_cost_slider")
+
+    p_val = st.slider("p value", min_value=0.0, max_value=1.0, value=0.5, step=0.01,
+                       key="bc_p_slider")
+
+    multi = len(sel_mcdm_methods) > 1
+    cols = ["Process"] + [METHOD_LABELS[m] for m in sel_mcdm_methods]
+    if multi and method_ranks:
+        cols.append("PSI Rank (p=0.50)")
+        base_psi = calc_psi(method_ranks, sel_mcdm_methods, 0.5)
+        base_psi_rank = rank_with_ties(base_psi, ascending=False)
+
+    base_rows = []
+    for pi, name in enumerate(names):
+        row = [name] + [int(method_ranks[m][pi]) for m in sel_mcdm_methods if m in method_ranks]
+        if multi and method_ranks:
+            row.append(int(base_psi_rank[pi]))
+        base_rows.append(row)
+
+    st.markdown("**Baseline results (Step 12, unperturbed)**")
+    st.dataframe(pd.DataFrame(base_rows, columns=cols), use_container_width=True, hide_index=True)
+
+    cat_scores_pert = {}
+    for ckey in l3_cats:
+        raw, benefits = get_raw_matrix(ckey)
+        raw_pert = raw.copy()
+        for j in range(raw.shape[0]):
+            pct = ben_pct if benefits[j] else cost_pct
+            raw_pert[j] = raw[j] * (1 + pct / 100.0)
+        cat_scores_pert[ckey] = compute_category_score_from_raw(ckey, raw_pert)
+
+    mat = np.array([cat_scores_pert[c] for c in l3_cats])
+    w = get_category_weights(mat, sel_weight_methods)
+    weighted_mat = mat * w[:, None]
+    ranks = run_mcdm_suite(weighted_mat, w, sel_mcdm_methods)
+
+    p_cols = ["Process"] + [METHOD_LABELS[m] for m in sel_mcdm_methods]
+    if multi:
+        p_cols.append(f"PSI Rank (p={p_val:.2f})")
+        psi_vals = calc_psi(ranks, sel_mcdm_methods, p_val)
+        psi_ranks = rank_with_ties(psi_vals, ascending=False)
+
+    p_rows = []
+    for pi, name in enumerate(names):
+        row = [name] + [int(ranks[m][pi]) for m in sel_mcdm_methods]
+        if multi:
+            row.append(int(psi_ranks[pi]))
+        p_rows.append(row)
+
+    st.markdown(
+        f"**Perturbed results** - Benefit indicators: **{ben_pct:+d}%**, "
+        f"Cost indicators: **{cost_pct:+d}%**, p = **{p_val:.2f}**"
+    )
+    st.dataframe(pd.DataFrame(p_rows, columns=p_cols), use_container_width=True, hide_index=True)
+    st.caption(
+        "Compare to the baseline above. This applies uniformly across every process "
+        "and every selected category, simulating systematic measurement bias or "
+        "optimistic/pessimistic forecasting."
+    )
+
+
+def validation_monte_carlo():
+    st.subheader("3. Monte Carlo uncertainty (Dirichlet)")
+    st.caption(
+        "10,000 Dirichlet-distributed draws are generated around the RCW category "
+        "weights from Step 10. The concentration parameter k is data-driven, not "
+        "user-set: computed from how much Equal, Entropy, and CRITIC weighting "
+        "methods agree with each other. High agreement gives high k (tight sampling). "
+        "High disagreement gives low k (wide sampling)."
+    )
+
+    l3_cats = ordered_l3_cats()
+    names = st.session_state.proc_names
+    n_proc = len(names)
+    cat_scores = st.session_state.cat_scores
+    final_w = st.session_state.final_cat_weights
+    sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+
+    mat = np.array([cat_scores[c] for c in l3_cats])
+    k_value, w_eq, w_en, w_cr = compute_dirichlet_k(mat)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Data-driven k (inter-method agreement)", f"{k_value:.1f} / 100")
+    with c2:
+        p_val = st.slider("p value (for PSI compromise rank)", min_value=0.0, max_value=1.0,
+                           value=0.5, step=0.01, key="mc_p_slider")
+
+    with st.expander("Show Equal / Entropy / CRITIC weights used to compute k"):
+        wdf = pd.DataFrame(
+            [w_eq, w_en, w_cr], index=["Equal", "Entropy", "CRITIC"],
+            columns=[CATS[c]["label"] for c in l3_cats],
+        ).round(4)
+        st.dataframe(wdf, use_container_width=True)
+
+    run_mc = st.button("Run Monte Carlo simulation (10,000 iterations)", type="primary")
+
+    if run_mc:
+        n_iter = 10000
+        alpha_scale = 2.0 + (k_value / 100.0) * 200.0
+        alpha = np.maximum(final_w * alpha_scale, 0.05)
+
+        rng = np.random.default_rng()
+        draws = rng.dirichlet(alpha, size=n_iter)
+
+        rank_counts = {m: np.zeros((n_proc, n_proc), dtype=int) for m in sel_mcdm_methods}
+        psi_rank_counts = np.zeros((n_proc, n_proc), dtype=int) if len(sel_mcdm_methods) > 1 else None
+
+        progress = st.progress(0, text="Running Monte Carlo simulation...")
+        batch = max(1, n_iter // 20)
+
+        for it in range(n_iter):
+            w_draw = draws[it]
+            weighted_mat = mat * w_draw[:, None]
+            ranks_draw = run_mcdm_suite(weighted_mat, w_draw, sel_mcdm_methods)
+            for m in sel_mcdm_methods:
+                for pi in range(n_proc):
+                    r = ranks_draw[m][pi]
+                    rank_counts[m][pi, r - 1] += 1
+            if psi_rank_counts is not None:
+                psi_vals = calc_psi(ranks_draw, sel_mcdm_methods, p_val)
+                psi_ranks = rank_with_ties(psi_vals, ascending=False)
+                for pi in range(n_proc):
+                    psi_rank_counts[pi, psi_ranks[pi] - 1] += 1
+            if it % batch == 0:
+                progress.progress(min(1.0, it / n_iter), text=f"Running Monte Carlo simulation... {it}/{n_iter}")
+        progress.progress(1.0, text="Done.")
+
+        st.session_state.mc_rank_counts = rank_counts
+        st.session_state.mc_psi_rank_counts = psi_rank_counts
+        st.session_state.mc_n_iter = n_iter
+        st.session_state.mc_methods_used = sel_mcdm_methods
+        st.session_state.mc_k_value = k_value
+
+    if "mc_rank_counts" in st.session_state:
+        rank_counts = st.session_state.mc_rank_counts
+        psi_rank_counts = st.session_state.mc_psi_rank_counts
+        n_iter = st.session_state.mc_n_iter
+        methods_used = st.session_state.mc_methods_used
+
+        st.markdown(
+            f"**Results from {n_iter:,} iterations** "
+            f"(k = {st.session_state.mc_k_value:.1f}, rank distribution as % of draws)"
+        )
+
+        for m in methods_used:
+            st.markdown(f"**{METHOD_LABELS[m]}**")
+            pct_table = (rank_counts[m] / n_iter * 100).round(1)
+            df = pd.DataFrame(pct_table, index=names, columns=[f"Rank {r+1}" for r in range(n_proc)])
+            st.dataframe(df, use_container_width=True)
+
+        if psi_rank_counts is not None:
+            st.markdown(f"**PSI compromise rank (p={p_val:.2f})**")
+            pct_table = (psi_rank_counts / n_iter * 100).round(1)
+            df = pd.DataFrame(pct_table, index=names, columns=[f"Rank {r+1}" for r in range(n_proc)])
+            st.dataframe(df, use_container_width=True)
+
+        st.caption(
+            "Each cell shows the percentage of the 10,000 simulated weight draws in "
+            "which that process landed at that rank. A process with most of its "
+            "probability mass concentrated in one rank column is a stable result; "
+            "spread across multiple columns indicates sensitivity to weighting uncertainty."
+        )
 
 
 STEPS = {
     1: step1, 2: step2, 3: step3, 4: step4, 5: step5, 6: step6,
     7: step7, 8: step8, 9: step9, 10: step10, 11: step11, 12: step12,
+    13: validation_intro,
 }
 
 STEPS[st.session_state.step]()
