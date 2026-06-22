@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.stats import spearmanr
 
-st.set_page_config(page_title="PRISM - Sustainability MCDM Tool", page_icon=":compass:", layout="wide")
+st.set_page_config(page_title="PRISM - Sustainability MCDM Tool", page_icon="🧭", layout="wide")
 
 PROC_COLORS = ["#2563EB", "#16A34A", "#EA580C", "#9333EA", "#0891B2",
                "#CA8A04", "#DB2777", "#4F46E5", "#65A30D", "#DC2626"]
@@ -428,14 +428,14 @@ STEP_LABELS = [
 ]
 
 with st.sidebar:
-    st.title(":compass: PRISM")
+    st.title("🧭 PRISM")
     st.caption("Sustainability MCDM Assessment Tool")
     st.divider()
     for i, label in enumerate(STEP_LABELS, start=1):
         if i < st.session_state.step:
-            st.success(label, icon=":white_check_mark:")
+            st.success(label, icon="✅")
         elif i == st.session_state.step:
-            st.info(label, icon=":arrow_right:")
+            st.info(label, icon="➡️")
         else:
             st.text(label)
     st.divider()
@@ -485,8 +485,7 @@ def step2():
     st.header("Step 2 - Select assessment categories")
     st.caption("Choose one or more categories to include in the analysis")
 
-    icons = {"env": ":herb:", "eco": ":coin:", "soc": ":busts_in_silhouette:",
-             "qua": ":medal:", "pro": ":zap:"}
+    icons = {"env": "🌿", "eco": "💰", "soc": "👥", "qua": "🏅", "pro": "⚡"}
     cols = st.columns(5)
     for i, key in enumerate(CATEGORY_ORDER):
         cat = CATS[key]
