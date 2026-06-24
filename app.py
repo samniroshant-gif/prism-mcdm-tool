@@ -661,17 +661,14 @@ def step5():
 
         rows = [f"{ind_names[j]} ({ind_units[j]})" for j in range(len(ind_names))]
         editor_key = f"editor_{ckey}"
+        seed_key = f"editor_seed_{ckey}"
 
-        seed = [[st.session_state.indicator_values.get((ckey, j, pi), 0.0)
-                  for pi in range(len(names))] for j in range(len(ind_names))]
-        df_seed = pd.DataFrame(seed, index=rows, columns=names)
+        if seed_key not in st.session_state:
+            seed = [[st.session_state.indicator_values.get((ckey, j, pi), 0.0)
+                      for pi in range(len(names))] for j in range(len(ind_names))]
+            st.session_state[seed_key] = pd.DataFrame(seed, index=rows, columns=names)
 
-        # Passing the seed DataFrame is safe even on reruns: Streamlit's
-        # data_editor only uses `value` to initialise a NEW widget. Once
-        # `editor_key` exists in session_state, Streamlit ignores `value`
-        # entirely and serves the live edited state instead, so user edits
-        # are preserved across reruns and never reset to zero.
-        edited = st.data_editor(df_seed, key=editor_key, use_container_width=True)
+        edited = st.data_editor(st.session_state[seed_key], key=editor_key, use_container_width=True)
 
         for j in range(len(ind_names)):
             for pi in range(len(names)):
