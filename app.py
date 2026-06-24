@@ -744,7 +744,7 @@ def step6():
                 return "background-color: rgba(220,38,38,0.25)"
             return ""
 
-        st.dataframe(df_corr.style.applymap(highlight), use_container_width=True)
+        st.dataframe(df_corr.style.map(highlight), use_container_width=True)
 
         pairs_flagged = []
         for a in range(n_ind):
