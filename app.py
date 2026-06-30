@@ -1,5 +1,5 @@
 """
-PRISM — Sustainability MCDM Assessment Tool
+PRISM — Performance Ranking via Integrated Sustainability Metrics
 Streamlit implementation
 
 Levels:
@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.stats import spearmanr
 
-st.set_page_config(page_title="PRISM - Sustainability MCDM Tool", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
 
 PROC_COLORS = ["#2563EB", "#16A34A", "#EA580C", "#9333EA", "#0891B2",
                "#CA8A04", "#DB2777", "#4F46E5", "#65A30D", "#DC2626"]
@@ -468,7 +468,7 @@ STEP_LABELS = [
 
 with st.sidebar:
     st.title("🧭 PRISM")
-    st.caption("Sustainability MCDM Assessment Tool")
+    st.caption("Performance Ranking via Integrated Sustainability Metrics")
     st.divider()
     for i, label in enumerate(STEP_LABELS, start=1):
         if i < st.session_state.step:

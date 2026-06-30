@@ -1,5 +1,5 @@
 """
-PRISM — Sustainability MCDM Assessment Tool
+PRISM — Performance Ranking via Integrated Sustainability Metrics
 Streamlit implementation
 
 Levels:
@@ -468,7 +468,7 @@ STEP_LABELS = [
 
 with st.sidebar:
     st.title("🧭 PRISM")
-    st.caption("Sustainability MCDM Assessment Tool")
+    st.caption("Performance Ranking via Integrated Sustainability Metrics")
     st.divider()
     for i, label in enumerate(STEP_LABELS, start=1):
         if i < st.session_state.step:
