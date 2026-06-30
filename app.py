@@ -524,13 +524,12 @@ def step2():
     st.header("Step 2 - Select assessment categories")
     st.caption("Choose one or more categories to include in the analysis")
 
-    icons = {"env": "🌿", "eco": "💰", "soc": "👥", "qua": "🏅", "pro": "⚡"}
     cols = st.columns(5)
     for i, key in enumerate(CATEGORY_ORDER):
         cat = CATS[key]
         with cols[i]:
             checked = key in st.session_state.sel_cats
-            new_val = st.checkbox(f"{icons[key]} {cat['label']}", value=checked, key=f"catchk_{key}")
+            new_val = st.checkbox(cat["label"], value=checked, key=f"catchk_{key}")
             if new_val:
                 st.session_state.sel_cats.add(key)
             else:

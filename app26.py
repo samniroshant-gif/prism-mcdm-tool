@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.stats import spearmanr
 
-st.set_page_config(page_title="PRISM - Sustainability MCDM Tool", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
 
 PROC_COLORS = ["#2563EB", "#16A34A", "#EA580C", "#9333EA", "#0891B2",
                "#CA8A04", "#DB2777", "#4F46E5", "#65A30D", "#DC2626"]
@@ -524,13 +524,12 @@ def step2():
     st.header("Step 2 - Select assessment categories")
     st.caption("Choose one or more categories to include in the analysis")
 
-    icons = {"env": "🌿", "eco": "💰", "soc": "👥", "qua": "🏅", "pro": "⚡"}
     cols = st.columns(5)
     for i, key in enumerate(CATEGORY_ORDER):
         cat = CATS[key]
         with cols[i]:
             checked = key in st.session_state.sel_cats
-            new_val = st.checkbox(f"{icons[key]} {cat['label']}", value=checked, key=f"catchk_{key}")
+            new_val = st.checkbox(cat["label"], value=checked, key=f"catchk_{key}")
             if new_val:
                 st.session_state.sel_cats.add(key)
             else:
