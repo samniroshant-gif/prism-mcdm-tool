@@ -41,6 +41,13 @@ h1, h2, h3, h4, h5, h6,
     font-family: Arial, sans-serif !important;
     color: #0D2B5E !important;
 }
+[data-testid="stExpander"] span[data-testid="stExpanderToggleIcon"],
+[data-testid="stExpander"] .material-icons,
+[data-testid="stExpander"] [class*="material-symbols"],
+span.material-icons,
+span[class*="material-symbols"] {
+    font-family: "Material Symbols Rounded", "Material Icons" !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1979,7 +1986,7 @@ def validation_monte_carlo():
         p_val = st.slider("p value (for PSI compromise rank)", min_value=0.0, max_value=1.0,
                            value=0.5, step=0.01, key="mc_p_slider")
 
-    with st.expander("Show Equal / Entropy / CRITIC weights used to compute k"):
+    with st.expander("Show Equal/Entropy/CRITIC weights used to compute k"):
         wdf = pd.DataFrame(
             [w_eq, w_en, w_cr], index=["Equal", "Entropy", "CRITIC"],
             columns=[CATS[c]["label"] for c in l3_cats],
