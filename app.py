@@ -1198,7 +1198,7 @@ def step11_5():
 
 # ============================================================================
 # STEP 12 - RESULTS
-# FIX 5: combination chart x-axis labels are HORIZONTAL (tickangle=0).
+# FIX 5: combination chart x-axis labels are vertical (tickangle=-90).
 # ============================================================================
 
 def step12():
@@ -1317,7 +1317,7 @@ def step12():
         fig2.update_layout(
             xaxis=dict(
                 tickmode="array", tickvals=list(range(len(combos))), ticktext=combo_labels,
-                tickangle=0,
+                tickangle=-90,
                 title="Category combination",
                 tickfont=dict(size=10),
                 automargin=True,
@@ -1328,7 +1328,7 @@ def step12():
                 range=[0.5, n_proc + 0.5],
             ),
             height=420,
-            margin=dict(l=10, r=10, t=10, b=60),
+            margin=dict(l=10, r=10, t=10, b=120),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
         st.plotly_chart(fig2, use_container_width=True)
@@ -1861,10 +1861,10 @@ def validation_weight_sensitivity():
         ))
     fig.update_layout(
         xaxis=dict(tickmode="array", tickvals=list(range(len(combos))), ticktext=combo_labels,
-                   tickangle=0, title="Category combination", tickfont=dict(size=10),
+                   tickangle=-90, title="Category combination", tickfont=dict(size=10),
                    automargin=True),
         yaxis=dict(title="Rank", autorange="reversed", dtick=1, tick0=1, range=[0.5, n_proc + 0.5]),
-        height=420, margin=dict(l=10, r=10, t=10, b=60),
+        height=420, margin=dict(l=10, r=10, t=10, b=120),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -2177,8 +2177,8 @@ def auxiliary_contribution_decomposition():
             textposition="outside",
         ))
         fig_ind.update_layout(
-            height=220, margin=dict(l=10, r=10, t=10, b=60),
-            xaxis_tickangle=-30, yaxis_title="Contribution",
+            height=220, margin=dict(l=10, r=10, t=10, b=100),
+            xaxis_tickangle=-90, yaxis_title="Contribution",
             showlegend=False,
             font=dict(family="Arial", color="#0D2B5E"),
         )
@@ -2744,8 +2744,8 @@ def auxiliary_multi_indicator_optimiser():
             textposition="outside",
         ))
         fig_alloc.update_layout(
-            height=280, margin=dict(l=10, r=10, t=10, b=60),
-            xaxis_tickangle=-30, yaxis_title="Budget allocated (%)",
+            height=280, margin=dict(l=10, r=10, t=10, b=100),
+            xaxis_tickangle=-90, yaxis_title="Budget allocated (%)",
             showlegend=False,
             font=dict(family="Arial", color="#0D2B5E"),
         )
