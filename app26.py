@@ -1,5 +1,5 @@
 """
-PRISM — Performance Ranking via Integrated Sustainability Metrics
+PRISM — Sustainability MCDM Assessment Tool
 Streamlit implementation
 
 Levels:
@@ -22,12 +22,43 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.stats import spearmanr
 
-st.set_page_config(page_title="Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
+
+st.markdown("""
+<style>
+html, body, [class*="css"], .stApp, .stMarkdown,
+div, span, p, label, input, textarea, select, button {
+    font-family: Arial, sans-serif !important;
+}
+h1, h2, h3, h4, h5, h6,
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    font-family: Arial, sans-serif !important;
+    color: #0D2B5E !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+CAT_SHORT = {
+    "env": "E",
+    "eco": "C",
+    "soc": "S",
+    "qua": "Q",
+    "pro": "P",
+    "cir": "O",
+}
 
 PROC_COLORS = ["#2563EB", "#16A34A", "#EA580C", "#9333EA", "#0891B2",
                "#CA8A04", "#DB2777", "#4F46E5", "#65A30D", "#DC2626"]
 
-CATEGORY_ORDER = ["env", "eco", "soc", "qua", "pro"]
+CATEGORY_ORDER = ["env", "eco", "soc", "qua", "pro", "cir"]
 
 CATS = {
     "env": {
@@ -81,6 +112,25 @@ CATS = {
         "default_units": ["hrs", "%"],
         "unit_options": [["hrs", "min", "days", "s"], ["%", "ratio", "g/g"]],
         "benefit": [False, True],
+    },
+    "cir": {
+        "label": "Circularity", "color": "#0F6E56", "bg": "#E1F5EE",
+        "indicators": [
+            "Recycled input fraction",
+            "Recoverable output fraction",
+            "Unrecoverable loss fraction",
+            "Virgin material intensity",
+            "Recycled content of product",
+        ],
+        "default_units": ["%", "%", "%", "kg/kg", "%"],
+        "unit_options": [
+            ["%", "ratio", "Custom..."],
+            ["%", "ratio", "Custom..."],
+            ["%", "ratio", "Custom..."],
+            ["kg/kg", "g/g", "ratio", "Custom..."],
+            ["%", "ratio", "Custom..."],
+        ],
+        "benefit": [True, True, False, False, True],
     },
 }
 
@@ -467,7 +517,7 @@ STEP_LABELS = [
 ]
 
 with st.sidebar:
-    st.title("🧭 PRISM")
+    st.title("PRISM")
     st.caption("Performance Ranking via Integrated Sustainability Metrics")
     st.divider()
     for i, label in enumerate(STEP_LABELS, start=1):
@@ -489,7 +539,6 @@ with st.sidebar:
 
 def step1():
     st.header("Step 1 - Define processes")
-    st.caption("How many manufacturing processes are you comparing? (2-10)")
 
     n = st.slider("Number of processes", min_value=2, max_value=10,
                    value=st.session_state.n_proc, key="n_proc_slider")
@@ -524,7 +573,7 @@ def step2():
     st.header("Step 2 - Select assessment categories")
     st.caption("Choose one or more categories to include in the analysis")
 
-    cols = st.columns(5)
+    cols = st.columns(len(CATEGORY_ORDER))
     for i, key in enumerate(CATEGORY_ORDER):
         cat = CATS[key]
         with cols[i]:
@@ -683,7 +732,6 @@ def step4():
 
 def step5():
     st.header("Step 5 - Enter indicator values")
-    st.caption("Fill in measured values for each process")
 
     names = st.session_state.proc_names
 
@@ -910,6 +958,7 @@ def step8():
             text=[f"{s:.4f}" for s in scores], textposition="outside",
         ))
         fig.update_layout(height=120 + 30 * len(names), margin=dict(l=10, r=10, t=10, b=10),
+                               font=dict(family="Arial", color="#0D2B5E"),
                            xaxis_title=None, yaxis_title=None, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1223,6 +1272,7 @@ def step12():
             xaxis_title="p", yaxis_title="PSI", height=380,
             margin=dict(l=10, r=10, t=10, b=10),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            font=dict(family="Arial", color="#0D2B5E"),
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1241,7 +1291,7 @@ def step12():
                              value=0.5, step=0.01, key="combo_p_slider")
 
         combos = get_combinations(l3_cats)
-        cat_initial = {c: CATS[c]["label"][:3] for c in l3_cats}
+        cat_initial = {c: CAT_SHORT.get(c, CATS[c]["label"][:1]) for c in l3_cats}
         combo_labels = ["+".join(cat_initial[c] for c in combo) for combo in combos]
 
         rank_grid = np.zeros((n_proc, len(combos)), dtype=int)
@@ -1785,7 +1835,7 @@ def validation_weight_sensitivity():
                          value=0.5, step=0.01, key="sens1_p_slider")
 
     combos = get_combinations(l3_cats)
-    cat_initial = {c: CATS[c]["label"][:3] for c in l3_cats}
+    cat_initial = {c: CAT_SHORT.get(c, CATS[c]["label"][:1]) for c in l3_cats}
     combo_labels = ["+".join(cat_initial[c] for c in combo) for combo in combos]
     n_proc = len(names)
 
@@ -2061,6 +2111,7 @@ def auxiliary_contribution_decomposition():
         margin=dict(l=10, r=10, t=10, b=10),
         yaxis_title="Weighted category score",
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        font=dict(family="Arial", color="#0D2B5E"),
     )
     st.plotly_chart(fig_cat, use_container_width=True)
 
@@ -2129,6 +2180,7 @@ def auxiliary_contribution_decomposition():
             height=220, margin=dict(l=10, r=10, t=10, b=60),
             xaxis_tickangle=-30, yaxis_title="Contribution",
             showlegend=False,
+            font=dict(family="Arial", color="#0D2B5E"),
         )
         st.plotly_chart(fig_ind, use_container_width=True)
         st.write("")
@@ -2183,6 +2235,7 @@ def auxiliary_contribution_decomposition():
         height=300, margin=dict(l=10, r=10, t=10, b=40),
         yaxis_title=f"Score gap ({proc_a} − {proc_b})",
         xaxis_title="Category", showlegend=False,
+        font=dict(family="Arial", color="#0D2B5E"),
     )
     st.plotly_chart(fig_gap, use_container_width=True)
 
@@ -2360,6 +2413,7 @@ def auxiliary_improvement_simulator():
                        range=[0.5, n_proc + 0.5]),
             height=320, margin=dict(l=10, r=10, t=30, b=40),
             showlegend=False,
+            font=dict(family="Arial", color="#0D2B5E"),
         )
         st.plotly_chart(fig_sim, use_container_width=True)
         st.caption(
@@ -2693,6 +2747,7 @@ def auxiliary_multi_indicator_optimiser():
             height=280, margin=dict(l=10, r=10, t=10, b=60),
             xaxis_tickangle=-30, yaxis_title="Budget allocated (%)",
             showlegend=False,
+            font=dict(family="Arial", color="#0D2B5E"),
         )
         st.plotly_chart(fig_alloc, use_container_width=True)
 
@@ -2719,6 +2774,7 @@ def auxiliary_multi_indicator_optimiser():
                            range=[0.5, n_proc + 0.5]),
                 height=300, margin=dict(l=10, r=10, t=30, b=40),
                 showlegend=False,
+                font=dict(family="Arial", color="#0D2B5E"),
             )
             st.plotly_chart(fig_traj, use_container_width=True)
 
@@ -2734,10 +2790,6 @@ def auxiliary_multi_indicator_optimiser():
 
 def auxiliary_intro():
     st.header("Step 14 - Auxiliary Assessment (optional)")
-    st.caption(
-        "Three analytical tools that go beyond ranking to explain why processes perform "
-        "as they do and what it would take to change the outcome."
-    )
 
     choice = st.radio(
         "Choose a tool",
