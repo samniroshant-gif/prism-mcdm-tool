@@ -27,7 +27,7 @@ st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustai
 st.markdown("""
 <style>
 html, body, [class*="css"], .stApp, .stMarkdown,
-div, span, p, label, input, textarea, select, button {
+div, p, label, input, textarea, select, button {
     font-family: Arial, sans-serif !important;
 }
 h1, h2, h3, h4, h5, h6,
@@ -41,7 +41,9 @@ h1, h2, h3, h4, h5, h6,
     font-family: Arial, sans-serif !important;
     color: #0D2B5E !important;
 }
-[data-testid="stExpander"] span[data-testid="stExpanderToggleIcon"],
+[data-testid="collapsedControl"] span,
+[data-testid="stSidebarCollapseButton"] span,
+[data-testid="stExpanderToggleIcon"],
 [data-testid="stExpander"] .material-icons,
 [data-testid="stExpander"] [class*="material-symbols"],
 span.material-icons,
