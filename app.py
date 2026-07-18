@@ -52,6 +52,20 @@ html, body, .stApp,
 table, th, td, .stDataFrame,
 div, p, label, input, textarea, select, button {
     font-family: "Times New Roman", Times, serif !important;
+    font-size: 12pt !important;
+}
+
+/* ── Checkbox / radio / widget labels — Step 2 categories etc. ── */
+.stCheckbox label,
+.stCheckbox p,
+.stRadio label,
+.stRadio p,
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p,
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stCaptionContainer"],
+.stCaption {
+    font-size: 12pt !important;
 }
 
 /* ── Headings — dark blue, bold ── */
@@ -73,8 +87,10 @@ h1, h2, h3, h4, h5, h6,
     background: #F7F9FC !important;
     border-right: 1px solid #DCE3EF !important;
 }
-[data-testid="stSidebar"] .stMarkdown p {
-    font-size: 13px !important;
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    font-size: 12pt !important;
     color: #4A5568 !important;
 }
 
@@ -101,6 +117,7 @@ h1, h2, h3, h4, h5, h6,
 /* ── Button styling ── */
 .stButton > button {
     font-family: "Times New Roman", Times, serif !important;
+    font-size: 12pt !important;
     font-weight: 600 !important;
     border-radius: 4px !important;
 }
@@ -117,6 +134,7 @@ h1, h2, h3, h4, h5, h6,
 [data-testid="stExpander"] summary p,
 [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
     font-family: "Times New Roman", Times, serif !important;
+    font-size: 12pt !important;
     font-weight: 600 !important;
     color: #0D2B5E !important;
 }
@@ -647,7 +665,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-size:11px;color:#6B7A99;margin-top:2px;"
+        "<p style='font-size:12pt;color:#6B7A99;margin-top:2px;"
         "font-family:Times New Roman,serif;'>"
         "Performance Ranking via Integrated Sustainability Metrics</p>",
         unsafe_allow_html=True,
@@ -665,7 +683,7 @@ with st.sidebar:
     step = st.session_state.step
     for section, steps in SECTIONS.items():
         st.markdown(
-            f"<p style='font-size:11px;font-weight:700;color:#0D2B5E;"
+            f"<p style='font-size:12pt;font-weight:700;color:#0D2B5E;"
             f"text-transform:uppercase;letter-spacing:0.05em;"
             f"font-family:Times New Roman,serif;margin:8px 0 2px 0;'>"
             f"{section}</p>",
@@ -678,13 +696,13 @@ with st.sidebar:
             short = label.split(". ", 1)[1] if ". " in label else label
             if s < step:
                 st.markdown(
-                    f"<p style='font-size:12px;color:#16A34A;margin:1px 0;"
+                    f"<p style='font-size:12pt;color:#16A34A;margin:1px 0;"
                     f"font-family:Times New Roman,serif;'>✓ {short}</p>",
                     unsafe_allow_html=True,
                 )
             elif s == step:
                 st.markdown(
-                    f"<p style='font-size:12px;font-weight:700;color:#0D2B5E;"
+                    f"<p style='font-size:12pt;font-weight:700;color:#0D2B5E;"
                     f"background:#E8EEF7;padding:3px 8px;border-radius:4px;"
                     f"border-left:3px solid #0D2B5E;margin:1px 0;"
                     f"font-family:Times New Roman,serif;'>▶ {short}</p>",
@@ -692,7 +710,7 @@ with st.sidebar:
                 )
             else:
                 st.markdown(
-                    f"<p style='font-size:12px;color:#9CA3AF;margin:1px 0;"
+                    f"<p style='font-size:12pt;color:#9CA3AF;margin:1px 0;"
                     f"font-family:Times New Roman,serif;'>○ {short}</p>",
                     unsafe_allow_html=True,
                 )
