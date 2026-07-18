@@ -16,21 +16,44 @@ Run with:  streamlit run app.py
 """
 
 import itertools
+import os
 import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib import font_manager as fm
 from matplotlib.colors import LinearSegmentedColormap
 import streamlit as st
 from scipy.stats import spearmanr
 
 st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
 
-st.markdown("""
+# Cloud-safe Times New Roman lookalike (Tinos) for matplotlib
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+_TINO_FILES = [
+    "Tinos-Regular.ttf",
+    "Tinos-Bold.ttf",
+    "Tinos-Italic.ttf",
+    "Tinos-BoldItalic.ttf",
+]
+for _fname in _TINO_FILES:
+    _fpath = os.path.join(_FONT_DIR, _fname)
+    if os.path.isfile(_fpath):
+        try:
+            fm.fontManager.addfont(_fpath)
+        except Exception:
+            pass
+
+_FONT_STACK = '"Times New Roman", "Tinos", Times, serif'
+_FONT_CSS = '"Times New Roman", "Tinos", Times, serif'
+
+st.markdown(f"""
 <style>
-/* ── Global Times New Roman (no blanket span — preserves Material Icons) ── */
+@import url('https://fonts.googleapis.com/css2?family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+/* ── Global Times / Tinos (no blanket span — preserves Material Icons) ── */
 html, body, .stApp,
 [data-testid="stAppViewContainer"],
 [data-testid="stHeader"],
@@ -49,13 +72,15 @@ html, body, .stApp,
 [data-baseweb="select"], [data-baseweb="input"],
 [data-baseweb="checkbox"], [data-baseweb="radio"],
 [data-baseweb="tag"], [data-baseweb="button"],
-table, th, td, .stDataFrame,
-div, p, label, input, textarea, select, button {
-    font-family: "Times New Roman", Times, serif !important;
+[data-testid="stDataFrame"] *,
+[data-testid="stTable"] *,
+table, th, td, .stDataFrame, .stTable,
+div, p, label, input, textarea, select, button {{
+    font-family: {_FONT_CSS} !important;
     font-size: 12pt !important;
-}
+}}
 
-/* ── Checkbox / radio / widget labels — Step 2 categories etc. ── */
+/* ── Checkbox / radio / widget labels ── */
 .stCheckbox label,
 .stCheckbox p,
 .stRadio label,
@@ -64,9 +89,9 @@ div, p, label, input, textarea, select, button {
 [data-testid="stWidgetLabel"] p,
 [data-testid="stMarkdownContainer"] p,
 [data-testid="stCaptionContainer"],
-.stCaption {
+.stCaption {{
     font-size: 12pt !important;
-}
+}}
 
 /* ── Headings — dark blue, bold ── */
 h1, h2, h3, h4, h5, h6,
@@ -76,68 +101,73 @@ h1, h2, h3, h4, h5, h6,
 [data-testid="stMarkdownContainer"] h4,
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
-    font-family: "Times New Roman", Times, serif !important;
+[data-testid="stSidebar"] h3 {{
+    font-family: {_FONT_CSS} !important;
     font-weight: 700 !important;
     color: #0D2B5E !important;
-}
+}}
 
 /* ── Sidebar professional styling ── */
-[data-testid="stSidebar"] {
+[data-testid="stSidebar"] {{
     background: #F7F9FC !important;
     border-right: 1px solid #DCE3EF !important;
-}
+}}
 [data-testid="stSidebar"] .stMarkdown p,
 [data-testid="stSidebar"] label,
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{
     font-size: 12pt !important;
     color: #4A5568 !important;
-}
+}}
 
 /* ── Hide default Streamlit alert box colours — use neutral cards ── */
-.stAlert {
+.stAlert {{
     border-radius: 4px !important;
     border-left: 3px solid #0D2B5E !important;
     background: #F7F9FC !important;
     color: #1A202C !important;
-}
+}}
 
-/* ── Dataframe header styling ── */
-[data-testid="stDataFrame"] th {
+/* ── Dataframe / table styling ── */
+[data-testid="stDataFrame"] th,
+[data-testid="stTable"] th {{
     background-color: #0D2B5E !important;
     color: #FFFFFF !important;
     font-weight: 700 !important;
-    font-family: "Times New Roman", Times, serif !important;
-}
-[data-testid="stDataFrame"] td {
-    font-family: "Times New Roman", Times, serif !important;
+    font-family: {_FONT_CSS} !important;
+    font-size: 12pt !important;
+}}
+[data-testid="stDataFrame"] td,
+[data-testid="stTable"] td,
+[data-testid="stDataFrame"] *,
+[data-testid="stTable"] * {{
+    font-family: {_FONT_CSS} !important;
     color: #1A202C !important;
-}
+}}
 
 /* ── Button styling ── */
-.stButton > button {
-    font-family: "Times New Roman", Times, serif !important;
+.stButton > button {{
+    font-family: {_FONT_CSS} !important;
     font-size: 12pt !important;
     font-weight: 600 !important;
     border-radius: 4px !important;
-}
-.stButton > button[kind="primary"] {
+}}
+.stButton > button[kind="primary"] {{
     background-color: #0D2B5E !important;
     color: #FFFFFF !important;
     border: none !important;
-}
-.stButton > button[kind="primary"]:hover {
+}}
+.stButton > button[kind="primary"]:hover {{
     background-color: #1A3A6E !important;
-}
+}}
 
 /* ── Expander header label (not icon spans) ── */
 [data-testid="stExpander"] summary p,
-[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
-    font-family: "Times New Roman", Times, serif !important;
+[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {{
+    font-family: {_FONT_CSS} !important;
     font-size: 12pt !important;
     font-weight: 600 !important;
     color: #0D2B5E !important;
-}
+}}
 
 /* ── Material icons — sidebar, expanders, header buttons ── */
 [data-testid="collapsedControl"] span,
@@ -151,32 +181,32 @@ h1, h2, h3, h4, h5, h6,
 span.material-icons,
 span[class*="material-symbols"],
 .material-icons,
-[class*="material-symbols"] {
+[class*="material-symbols"] {{
     font-family: "Material Symbols Rounded", "Material Icons" !important;
     font-weight: normal !important;
     font-style: normal !important;
     letter-spacing: normal !important;
     text-transform: none !important;
     white-space: nowrap !important;
-}
+}}
 
 /* ── Progress bar ── */
-.stProgress > div > div {
+.stProgress > div > div {{
     background-color: #0D2B5E !important;
-}
+}}
 
 /* ── Divider ── */
-hr {
+hr {{
     border-color: #DCE3EF !important;
-}
+}}
 </style>
 """, unsafe_allow_html=True)
 
 
 
 MPL_STYLE = {
-    "font.family": "Times New Roman",
-    "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+    "font.family": "Tinos",
+    "font.serif": ["Times New Roman", "Tinos", "Times", "Liberation Serif", "DejaVu Serif"],
     "axes.titlecolor": "#0D2B5E",
     "axes.labelcolor": "#0D2B5E",
     "xtick.color": "#0D2B5E",
@@ -195,6 +225,7 @@ apply_mpl_style()
 
 def mpl_show(fig):
     """Display matplotlib figure in Streamlit and close it."""
+    apply_mpl_style()
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
@@ -661,12 +692,12 @@ STEP_LABELS = [
 with st.sidebar:
     st.markdown(
         "<h2 style='margin-bottom:0;font-size:22px;color:#0D2B5E;"
-        "font-family:Times New Roman,serif;font-weight:700;'>PRISM</h2>",
+        "font-family:Times New Roman,Tinos,Times,serif;font-weight:700;'>PRISM</h2>",
         unsafe_allow_html=True,
     )
     st.markdown(
         "<p style='font-size:12pt;color:#6B7A99;margin-top:2px;"
-        "font-family:Times New Roman,serif;'>"
+        "font-family:Times New Roman,Tinos,Times,serif;'>"
         "Performance Ranking via Integrated Sustainability Metrics</p>",
         unsafe_allow_html=True,
     )
@@ -685,7 +716,7 @@ with st.sidebar:
         st.markdown(
             f"<p style='font-size:12pt;font-weight:700;color:#0D2B5E;"
             f"text-transform:uppercase;letter-spacing:0.05em;"
-            f"font-family:Times New Roman,serif;margin:8px 0 2px 0;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;margin:8px 0 2px 0;'>"
             f"{section}</p>",
             unsafe_allow_html=True,
         )
@@ -697,7 +728,7 @@ with st.sidebar:
             if s < step:
                 st.markdown(
                     f"<p style='font-size:12pt;color:#16A34A;margin:1px 0;"
-                    f"font-family:Times New Roman,serif;'>✓ {short}</p>",
+                    f"font-family:Times New Roman,Tinos,Times,serif;'>✓ {short}</p>",
                     unsafe_allow_html=True,
                 )
             elif s == step:
@@ -705,13 +736,13 @@ with st.sidebar:
                     f"<p style='font-size:12pt;font-weight:700;color:#0D2B5E;"
                     f"background:#E8EEF7;padding:3px 8px;border-radius:4px;"
                     f"border-left:3px solid #0D2B5E;margin:1px 0;"
-                    f"font-family:Times New Roman,serif;'>▶ {short}</p>",
+                    f"font-family:Times New Roman,Tinos,Times,serif;'>▶ {short}</p>",
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
                     f"<p style='font-size:12pt;color:#9CA3AF;margin:1px 0;"
-                    f"font-family:Times New Roman,serif;'>○ {short}</p>",
+                    f"font-family:Times New Roman,Tinos,Times,serif;'>○ {short}</p>",
                     unsafe_allow_html=True,
                 )
 
@@ -728,13 +759,13 @@ with st.sidebar:
 def landing_page():
     st.markdown(
         "<h1 style='font-size:32px;font-weight:700;color:#0D2B5E;"
-        "font-family:Times New Roman,serif;margin-bottom:4px;'>"
+        "font-family:Times New Roman,Tinos,Times,serif;margin-bottom:4px;'>"
         "PRISM</h1>",
         unsafe_allow_html=True,
     )
     st.markdown(
         "<p style='font-size:16px;color:#4A5568;font-style:italic;"
-        "font-family:Times New Roman,serif;margin-bottom:24px;'>"
+        "font-family:Times New Roman,Tinos,Times,serif;margin-bottom:24px;'>"
         "Performance Ranking via Integrated Sustainability Metrics</p>",
         unsafe_allow_html=True,
     )
@@ -744,13 +775,13 @@ def landing_page():
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown(
-            "<h3 style='color:#0D2B5E;font-family:Times New Roman,serif;"
+            "<h3 style='color:#0D2B5E;font-family:Times New Roman,Tinos,Times,serif;"
             "font-weight:700;'>About PRISM</h3>",
             unsafe_allow_html=True,
         )
         st.markdown(
             "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
-            "font-family:Times New Roman,serif;text-align:justify;'>"
+            "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
             "PRISM is an integrated multi-criteria decision-making framework "
             "developed for the comparative sustainability assessment of manufacturing "
             "processes. It combines indicator-level weighting through the Method Based "
@@ -762,7 +793,7 @@ def landing_page():
         )
         st.markdown(
             "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
-            "font-family:Times New Roman,serif;text-align:justify;'>"
+            "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
             "The framework evaluates alternatives across six sustainability dimensions: "
             "Environmental, Economic, Social, Quality, Productivity, and Circularity. "
             "An integrated validation suite and analytics layer provide robustness "
@@ -772,7 +803,7 @@ def landing_page():
 
     with c2:
         st.markdown(
-            "<h3 style='color:#0D2B5E;font-family:Times New Roman,serif;"
+            "<h3 style='color:#0D2B5E;font-family:Times New Roman,Tinos,Times,serif;"
             "font-weight:700;'>Framework</h3>",
             unsafe_allow_html=True,
         )
@@ -788,9 +819,9 @@ def landing_page():
                 f"<div style='background:#F7F9FC;border-left:3px solid #0D2B5E;"
                 f"padding:8px 12px;border-radius:4px;margin:6px 0;'>"
                 f"<span style='font-weight:700;color:#0D2B5E;font-size:13px;"
-                f"font-family:Times New Roman,serif;'>{title}</span>"
+                f"font-family:Times New Roman,Tinos,Times,serif;'>{title}</span>"
                 f"<br><span style='font-size:12px;color:#6B7A99;"
-                f"font-family:Times New Roman,serif;'>{desc}</span></div>",
+                f"font-family:Times New Roman,Tinos,Times,serif;'>{desc}</span></div>",
                 unsafe_allow_html=True,
             )
 
@@ -805,7 +836,7 @@ def landing_page():
 
     st.markdown(
         "<p style='text-align:center;font-size:11px;color:#9CA3AF;"
-        "font-family:Times New Roman,serif;margin-top:24px;'>"
+        "font-family:Times New Roman,Tinos,Times,serif;margin-top:24px;'>"
         "Cranfield University — Welding and Additive Manufacturing Centre (WAMC) "
         "| PhD Research Tool | Version 1.0</p>",
         unsafe_allow_html=True,
@@ -957,7 +988,7 @@ def step4():
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
             f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,serif;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
         st.write("")
@@ -991,7 +1022,7 @@ def step4():
                     disabled.add((ckey, j))
             with c2:
                 if not enabled:
-                    st.markdown(f"<span style='color:#aaa;text-decoration:line-through;font-family:Times New Roman,serif;'>{ind}</span>",
+                    st.markdown(f"<span style='color:#aaa;text-decoration:line-through;font-family:Times New Roman,Tinos,Times,serif;'>{ind}</span>",
                                 unsafe_allow_html=True)
                 else:
                     st.text(ind)
@@ -1067,7 +1098,7 @@ def step5():
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
             f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,serif;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -1120,7 +1151,7 @@ def step6():
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
             f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,serif;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -1232,7 +1263,7 @@ def step7():
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
             f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,serif;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -1264,7 +1295,7 @@ def step8():
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
             f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,serif;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -1701,7 +1732,7 @@ def validation_rank_reversal():
     st.dataframe(df_compare, use_container_width=True, hide_index=True)
 
     if reversal_found:
-        st.markdown('<div style="background:#FFF8E1;border-left:3px solid #D97706;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,serif;color:#7B5800;font-size:13px;">Rank-reversal detected: one or more alternatives changed position after exclusion.</div>', unsafe_allow_html=True)
+        st.markdown('<div style="background:#FFF8E1;border-left:3px solid #D97706;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,Tinos,Times,serif;color:#7B5800;font-size:13px;">Rank-reversal detected: one or more alternatives changed position after exclusion.</div>', unsafe_allow_html=True)
     else:
         st.success(
             "✅ No rank-reversal detected: the relative ranking of the remaining alternatives "
@@ -1830,7 +1861,7 @@ def validation_normalisation_sensitivity():
             "changes one or more rankings. The result has some sensitivity to normalisation choice."
         )
     else:
-        st.markdown(f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,serif;color:#1B5E20;font-size:13px;">No rank change under {alt_norm_label} normalisation. The result is robust to normalisation method choice.</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,Tinos,Times,serif;color:#1B5E20;font-size:13px;">No rank change under {alt_norm_label} normalisation. The result is robust to normalisation method choice.</div>', unsafe_allow_html=True)
 
     
 
@@ -2292,7 +2323,7 @@ def analytics_leave_one_out():
     # ── Interpretation ────────────────────────────────────────────────────────
     st.divider()
     if not any_change:
-        st.markdown('<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,serif;color:#1B5E20;font-size:13px;">No rank changes detected across all leave-one-out runs. The PSI ranking is robust to the exclusion of any single category.</div>', unsafe_allow_html=True)
+        st.markdown('<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,Tinos,Times,serif;color:#1B5E20;font-size:13px;">No rank changes detected across all leave-one-out runs. The PSI ranking is robust to the exclusion of any single category.</div>', unsafe_allow_html=True)
     else:
         critical = []
         for excl_ckey in l3_cats:
@@ -2349,7 +2380,7 @@ def analytics_indicator_contribution():
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
             f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,serif;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -2463,7 +2494,7 @@ def analytics_indicator_loo():
             st.markdown(
                 f"<span style='background:{cat['bg']};color:{cat['color']};"
                 f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-                f"font-family:Times New Roman,serif;'>"
+                f"font-family:Times New Roman,Tinos,Times,serif;'>"
                 f"{cat['label']}</span> — only one indicator, skip.", 
                 unsafe_allow_html=True,
             )
@@ -2473,7 +2504,7 @@ def analytics_indicator_loo():
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
             f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,serif;'>"
+            f"font-family:Times New Roman,Tinos,Times,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -2531,7 +2562,7 @@ def analytics_indicator_loo():
     # Overall interpretation
     st.divider()
     if not any_change:
-        st.markdown('<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,serif;color:#1B5E20;font-size:13px;">No rank changes detected across all indicator leave-one-out runs. The PSI ranking is robust to the exclusion of any single indicator.</div>', unsafe_allow_html=True)
+        st.markdown('<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,Tinos,Times,serif;color:#1B5E20;font-size:13px;">No rank changes detected across all indicator leave-one-out runs. The PSI ranking is robust to the exclusion of any single indicator.</div>', unsafe_allow_html=True)
     else:
         st.warning(
             "⚠️ One or more rank changes detected. "
@@ -2592,7 +2623,7 @@ def analytics_stakeholder_preference():
             st.markdown(
                 f"<span style='background:{cat['bg']};color:{cat['color']};"
                 f"padding:2px 10px;border-radius:10px;font-size:13px;font-weight:600;"
-                f"font-family:Times New Roman,serif;'>"
+                f"font-family:Times New Roman,Tinos,Times,serif;'>"
                 f"{cat['label']}</span>", unsafe_allow_html=True,
             )
         with c2:
@@ -2668,7 +2699,7 @@ def analytics_stakeholder_preference():
             "The current RCW-based ranking is sensitive to this stakeholder's priorities."
         )
     else:
-        st.markdown(f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,serif;color:#1B5E20;font-size:13px;">The ranking is identical under the custom weights. The result is robust to this stakeholder profile.</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,Tinos,Times,serif;color:#1B5E20;font-size:13px;">The ranking is identical under the custom weights. The result is robust to this stakeholder profile.</div>', unsafe_allow_html=True)
 
     # ── Method-by-method breakdown ────────────────────────────────────────────
     st.divider()
