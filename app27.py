@@ -869,14 +869,6 @@ def landing_page():
             st.session_state.step = 1
             st.rerun()
 
-    st.markdown(
-        "<p style='text-align:center;font-size:11px;color:#9CA3AF;"
-        "font-family:Times New Roman,Tinos,Times,serif;margin-top:24px;'>"
-        "Cranfield University — Welding and Additive Manufacturing Centre (WAMC) "
-        "| PhD Research Tool | Version 1.0</p>",
-        unsafe_allow_html=True,
-    )
-
 
 
 def step1():
