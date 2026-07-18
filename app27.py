@@ -17,6 +17,7 @@ Run with:  streamlit run app.py
 
 import itertools
 import os
+import base64
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -30,27 +31,48 @@ from scipy.stats import spearmanr
 
 st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
 
-# Cloud-safe Times New Roman lookalike (Tinos) for matplotlib
+# Cloud-safe Times New Roman lookalike (Tinos) for matplotlib + CSS @font-face
 _FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 _TINO_FILES = [
-    "Tinos-Regular.ttf",
-    "Tinos-Bold.ttf",
-    "Tinos-Italic.ttf",
-    "Tinos-BoldItalic.ttf",
+    ("Tinos-Regular.ttf", "normal", 400),
+    ("Tinos-Bold.ttf", "normal", 700),
+    ("Tinos-Italic.ttf", "italic", 400),
+    ("Tinos-BoldItalic.ttf", "italic", 700),
 ]
-for _fname in _TINO_FILES:
+_FONT_FACE_CSS = []
+for _fname, _style, _weight in _TINO_FILES:
     _fpath = os.path.join(_FONT_DIR, _fname)
     if os.path.isfile(_fpath):
         try:
             fm.fontManager.addfont(_fpath)
         except Exception:
             pass
+        try:
+            with open(_fpath, "rb") as _fh:
+                _b64 = base64.b64encode(_fh.read()).decode("ascii")
+            _FONT_FACE_CSS.append(
+                f"@font-face{{font-family:'Tinos';font-style:{_style};font-weight:{_weight};"
+                f"src:url(data:font/ttf;base64,{_b64}) format('truetype');"
+                f"font-display:swap;}}"
+            )
+        except Exception:
+            pass
 
-_FONT_STACK = '"Times New Roman", "Tinos", Times, serif'
 _FONT_CSS = '"Times New Roman", "Tinos", Times, serif'
+_FONT_FACES = "\n".join(_FONT_FACE_CSS)
+
+def tnr_label(text, *, color="#1A202C", size="12pt", weight="400", strike=False):
+    """Render plain UI text in Times/Tinos (st.text uses a fixed sans font)."""
+    deco = "text-decoration:line-through;" if strike else ""
+    st.markdown(
+        f"<div style='font-family:{_FONT_CSS};font-size:{size};font-weight:{weight};"
+        f"color:{color};margin:4px 0;line-height:1.4;{deco}'>{text}</div>",
+        unsafe_allow_html=True,
+    )
 
 st.markdown(f"""
 <style>
+{_FONT_FACES}
 @import url('https://fonts.googleapis.com/css2?family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap');
 
 /* ── Global Times / Tinos (no blanket span — preserves Material Icons) ── */
@@ -65,6 +87,8 @@ html, body, .stApp,
 [data-testid="stMetricLabel"],
 [data-testid="stMetricDelta"],
 [data-testid="stCaptionContainer"],
+[data-testid="stText"],
+[data-testid="stText"] *,
 .stMarkdown, .stText, .stCaption, .stAlert, .stTooltipContent,
 .stCheckbox, .stRadio, .stSelectbox, .stMultiSelect,
 .stNumberInput, .stTextInput, .stTextArea, .stSlider,
@@ -74,10 +98,19 @@ html, body, .stApp,
 [data-baseweb="tag"], [data-baseweb="button"],
 [data-testid="stDataFrame"] *,
 [data-testid="stTable"] *,
-table, th, td, .stDataFrame, .stTable,
-div, p, label, input, textarea, select, button {{
+[data-testid="stDataEditor"] *,
+table, th, td, .stDataFrame, .stTable, .stDataEditor,
+div, p, label, input, textarea, select, button, pre {{
     font-family: {_FONT_CSS} !important;
     font-size: 12pt !important;
+}}
+
+/* Force Streamlit fixed/monospace text widgets onto Tinos */
+[data-testid="stText"],
+[data-testid="stText"] pre,
+.stText, .stText pre,
+pre, code, .stCodeBlock, .stCode {{
+    font-family: {_FONT_CSS} !important;
 }}
 
 /* ── Checkbox / radio / widget labels ── */
@@ -90,6 +123,7 @@ div, p, label, input, textarea, select, button {{
 [data-testid="stMarkdownContainer"] p,
 [data-testid="stCaptionContainer"],
 .stCaption {{
+    font-family: {_FONT_CSS} !important;
     font-size: 12pt !important;
 }}
 
@@ -139,7 +173,8 @@ h1, h2, h3, h4, h5, h6,
 [data-testid="stDataFrame"] td,
 [data-testid="stTable"] td,
 [data-testid="stDataFrame"] *,
-[data-testid="stTable"] * {{
+[data-testid="stTable"] *,
+[data-testid="stDataEditor"] * {{
     font-family: {_FONT_CSS} !important;
     color: #1A202C !important;
 }}
@@ -1022,10 +1057,9 @@ def step4():
                     disabled.add((ckey, j))
             with c2:
                 if not enabled:
-                    st.markdown(f"<span style='color:#aaa;text-decoration:line-through;font-family:Times New Roman,Tinos,Times,serif;'>{ind}</span>",
-                                unsafe_allow_html=True)
+                    tnr_label(ind, color="#aaaaaa", strike=True)
                 else:
-                    st.text(ind)
+                    tnr_label(ind)
             with c3:
                 chosen = st.selectbox(
                     "unit", display_options, index=default_index,
