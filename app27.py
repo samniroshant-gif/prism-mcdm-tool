@@ -30,9 +30,27 @@ st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustai
 
 st.markdown("""
 <style>
-/* ── Global font (do not force on span — breaks Material Icons ligatures) ── */
-html, body, [class*="css"], .stApp, .stMarkdown,
-div, p, label, input, textarea, select, button, td, th {
+/* ── Global Times New Roman (no blanket span — preserves Material Icons) ── */
+html, body, .stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stSidebar"],
+[data-testid="stMarkdownContainer"],
+[data-testid="stWidgetLabel"],
+[data-testid="stMetricValue"],
+[data-testid="stMetricLabel"],
+[data-testid="stMetricDelta"],
+[data-testid="stCaptionContainer"],
+.stMarkdown, .stText, .stCaption, .stAlert, .stTooltipContent,
+.stCheckbox, .stRadio, .stSelectbox, .stMultiSelect,
+.stNumberInput, .stTextInput, .stTextArea, .stSlider,
+.stDownloadButton > button,
+[data-baseweb="select"], [data-baseweb="input"],
+[data-baseweb="checkbox"], [data-baseweb="radio"],
+[data-baseweb="tag"], [data-baseweb="button"],
+table, th, td, .stDataFrame,
+div, p, label, input, textarea, select, button {
     font-family: "Times New Roman", Times, serif !important;
 }
 
@@ -103,7 +121,7 @@ h1, h2, h3, h4, h5, h6,
     color: #0D2B5E !important;
 }
 
-/* ── Material icons — sidebar, expanders (Steps 11/13), header buttons ── */
+/* ── Material icons — sidebar, expanders, header buttons ── */
 [data-testid="collapsedControl"] span,
 [data-testid="stSidebarCollapseButton"] span,
 [data-testid="stExpanderToggleIcon"],
@@ -139,8 +157,8 @@ hr {
 
 
 MPL_STYLE = {
-    "font.family": "serif",
-    "font.serif": ["Times New Roman"],
+    "font.family": "Times New Roman",
+    "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
     "axes.titlecolor": "#0D2B5E",
     "axes.labelcolor": "#0D2B5E",
     "xtick.color": "#0D2B5E",
@@ -154,6 +172,8 @@ MPL_STYLE = {
 
 def apply_mpl_style():
     plt.rcParams.update(MPL_STYLE)
+
+apply_mpl_style()
 
 def mpl_show(fig):
     """Display matplotlib figure in Streamlit and close it."""
@@ -918,7 +938,8 @@ def step4():
         cat = CATS[ckey]
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+            f"font-family:Times New Roman,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
         st.write("")
@@ -952,7 +973,7 @@ def step4():
                     disabled.add((ckey, j))
             with c2:
                 if not enabled:
-                    st.markdown(f"<span style='color:#aaa;text-decoration:line-through;'>{ind}</span>",
+                    st.markdown(f"<span style='color:#aaa;text-decoration:line-through;font-family:Times New Roman,serif;'>{ind}</span>",
                                 unsafe_allow_html=True)
                 else:
                     st.text(ind)
@@ -1027,7 +1048,8 @@ def step5():
 
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+            f"font-family:Times New Roman,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -1079,7 +1101,8 @@ def step6():
 
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+            f"font-family:Times New Roman,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -1190,7 +1213,8 @@ def step7():
 
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+            f"font-family:Times New Roman,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -1221,7 +1245,8 @@ def step8():
 
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+            f"font-family:Times New Roman,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -2305,7 +2330,8 @@ def analytics_indicator_contribution():
 
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+            f"font-family:Times New Roman,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -2418,7 +2444,8 @@ def analytics_indicator_loo():
         if n_ind < 2:
             st.markdown(
                 f"<span style='background:{cat['bg']};color:{cat['color']};"
-                f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+                f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+                f"font-family:Times New Roman,serif;'>"
                 f"{cat['label']}</span> — only one indicator, skip.", 
                 unsafe_allow_html=True,
             )
@@ -2427,7 +2454,8 @@ def analytics_indicator_loo():
 
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;'>"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
+            f"font-family:Times New Roman,serif;'>"
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
@@ -2545,7 +2573,8 @@ def analytics_stakeholder_preference():
         with c1:
             st.markdown(
                 f"<span style='background:{cat['bg']};color:{cat['color']};"
-                f"padding:2px 10px;border-radius:10px;font-size:13px;font-weight:600;'>"
+                f"padding:2px 10px;border-radius:10px;font-size:13px;font-weight:600;"
+                f"font-family:Times New Roman,serif;'>"
                 f"{cat['label']}</span>", unsafe_allow_html=True,
             )
         with c2:
