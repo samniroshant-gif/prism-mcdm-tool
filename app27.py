@@ -30,9 +30,9 @@ st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustai
 
 st.markdown("""
 <style>
-/* ── Global font ── */
+/* ── Global font (do not force on span — breaks Material Icons ligatures) ── */
 html, body, [class*="css"], .stApp, .stMarkdown,
-div, p, label, input, textarea, select, button, td, th, span {
+div, p, label, input, textarea, select, button, td, th {
     font-family: "Times New Roman", Times, serif !important;
 }
 
@@ -95,20 +95,33 @@ h1, h2, h3, h4, h5, h6,
     background-color: #1A3A6E !important;
 }
 
-/* ── Expander header ── */
-[data-testid="stExpander"] summary {
+/* ── Expander header label (not icon spans) ── */
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
     font-family: "Times New Roman", Times, serif !important;
     font-weight: 600 !important;
     color: #0D2B5E !important;
 }
 
-/* ── Material icons — preserve icon font ── */
+/* ── Material icons — sidebar, expanders (Steps 11/13), header buttons ── */
 [data-testid="collapsedControl"] span,
 [data-testid="stSidebarCollapseButton"] span,
 [data-testid="stExpanderToggleIcon"],
+[data-testid="stExpanderToggleIcon"] span,
+[data-testid="stExpander"] summary > span,
+[data-testid="stExpander"] summary span[class*="material"],
+[data-testid="stExpander"] .material-icons,
+[data-testid="stExpander"] [class*="material-symbols"],
 span.material-icons,
-span[class*="material-symbols"] {
+span[class*="material-symbols"],
+.material-icons,
+[class*="material-symbols"] {
     font-family: "Material Symbols Rounded", "Material Icons" !important;
+    font-weight: normal !important;
+    font-style: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    white-space: nowrap !important;
 }
 
 /* ── Progress bar ── */
@@ -1357,11 +1370,12 @@ def step11():
 
     families_selected = set()
     for family_name, family_data in MCDM_FAMILIES.items():
-        with st.expander(f"**{family_name}** — {family_data['description']}", expanded=True):
+        with st.expander(family_name, expanded=True):
+            st.caption(family_data["description"])
             for key, (short, full) in family_data["methods"].items():
                 checked = key in st.session_state.sel_mcdm_methods
                 new_val = st.checkbox(
-                    f"**{short}** — {full}",
+                    f"{short} — {full}",
                     value=checked,
                     key=f"mmchk_{key}",
                 )
