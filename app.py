@@ -7,7 +7,7 @@ Levels:
   1.5 Correlation check (within-category Spearman correlation review, informational)
   2. Indicator processing (MEREC normalisation/weights, N2 normalisation, category scores)
   3. Decision aggregation (Equal/Entropy/CRITIC weighting + RCW consolidation,
-                            TOPSIS/VIKOR/ELECTRE I/MULTIMOORA/WASPAS, PSI compromise ranking,
+                            TOPSIS/VIKOR/ELECTRE-Score/MULTIMOORA/WASPAS, PSI compromise ranking,
                             category-combination rank-stability scatter)
   4. Optional validation: weighting-method sensitivity, benefit/cost indicator
      sensitivity, Monte Carlo Dirichlet uncertainty.
@@ -27,6 +27,16 @@ import matplotlib.patches as mpatches
 from matplotlib import font_manager as fm
 from matplotlib.colors import LinearSegmentedColormap
 import streamlit as st
+import io
+import plotly.graph_objects as go
+from datetime import datetime
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_OK = True
+except ImportError:
+    OPENPYXL_OK = False
 from scipy.stats import spearmanr
 
 st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
@@ -271,13 +281,29 @@ CAT_SHORT = {
     "soc": "S",
     "qua": "Q",
     "pro": "P",
-    "cir": "O",
 }
+
+def proc_short_labels(names):
+    """Generate short labels for processes to avoid x-axis overlap."""
+    shorts = []
+    used = set()
+    for name in names:
+        words = name.strip().split()
+        # Try first letters of each word
+        abbr = "".join(w[0].upper() for w in words if w)
+        if abbr in used or len(abbr) == 0:
+            abbr = name[:4].strip()
+        if abbr in used:
+            abbr = name[:6].strip()
+        used.add(abbr)
+        shorts.append(abbr)
+    return shorts
+
 
 PROC_COLORS = ["#2563EB", "#16A34A", "#EA580C", "#9333EA", "#0891B2",
                "#CA8A04", "#DB2777", "#4F46E5", "#65A30D", "#DC2626"]
 
-CATEGORY_ORDER = ["env", "eco", "soc", "qua", "pro", "cir"]
+CATEGORY_ORDER = ["env", "eco", "soc", "qua", "pro"]
 
 CATS = {
     "env": {
@@ -331,25 +357,6 @@ CATS = {
         "default_units": ["hrs", "%"],
         "unit_options": [["hrs", "min", "days", "s"], ["%", "ratio", "g/g"]],
         "benefit": [False, True],
-    },
-    "cir": {
-        "label": "Circularity", "color": "#0F6E56", "bg": "#E1F5EE",
-        "indicators": [
-            "Recycled input fraction",
-            "Recoverable output fraction",
-            "Unrecoverable loss fraction",
-            "Virgin material intensity",
-            "Recycled content of product",
-        ],
-        "default_units": ["%", "%", "%", "kg/kg", "%"],
-        "unit_options": [
-            ["%", "ratio", "Custom..."],
-            ["%", "ratio", "Custom..."],
-            ["%", "ratio", "Custom..."],
-            ["kg/kg", "g/g", "ratio", "Custom..."],
-            ["%", "ratio", "Custom..."],
-        ],
-        "benefit": [True, True, False, False, True],
     },
 }
 
@@ -483,21 +490,67 @@ def vikor(weighted_mat, weights, v=0.5):
     return rank_with_ties(Q, ascending=True)
 
 
-def electre1(weighted_mat, weights, c_thresh=0.6, d_thresh=0.4):
-    n_alt = weighted_mat.shape[1]
-    total_w = weights.sum() or 1.0
-    outranks = np.zeros((n_alt, n_alt), dtype=bool)
-    ranges = weighted_mat.max(axis=1) - weighted_mat.min(axis=1)
-    max_range = ranges.max() or 1.0
-    for a in range(n_alt):
-        for b in range(n_alt):
-            if a == b:
-                continue
-            concordant = weighted_mat[:, a] >= weighted_mat[:, b]
-            C = np.sum(weights[concordant]) / total_w
-            D = np.max(np.maximum(weighted_mat[:, b] - weighted_mat[:, a], 0)) / max_range
-            outranks[a, b] = (C >= c_thresh) and (D <= d_thresh)
-    scores = outranks.sum(axis=1) - outranks.sum(axis=0)
+def electre_score(weighted_mat, weights, c_thresh=0.65, d_thresh=0.35, n_refs=5):
+    """
+    ELECTRE-Score (Figueira, Greco & Roy, 2022, EJOR 297:986-1005).
+    Assigns a continuous score to each alternative by comparing it
+    against uniformly-spaced reference profiles spanning [min, max]
+    of each criterion. Produces meaningful discrimination even with
+    few alternatives — unlike ELECTRE I which is binary.
+    """
+    n_crit, n_alt = weighted_mat.shape
+    w = np.asarray(weights, dtype=float)
+    total_w = w.sum() or 1.0
+    w = w / total_w
+
+    # Reference profiles: h profiles uniformly spanning [min, max] per criterion
+    ref_scores = np.linspace(1.0, 0.0, n_refs)
+    mat_max = weighted_mat.max(axis=1)
+    mat_min = weighted_mat.min(axis=1)
+    # ref_profiles shape: (n_crit, n_refs)
+    ref_profiles = mat_min[:, None] + np.outer(
+        mat_max - mat_min, ref_scores
+    )
+
+    # Ranges per criterion across all alternatives AND reference profiles
+    all_vals = np.hstack([weighted_mat, ref_profiles])
+    ranges = all_vals.max(axis=1) - all_vals.min(axis=1)
+    ranges = np.where(ranges > 1e-10, ranges, 1.0)
+
+    def _concordance(a_vec, b_vec):
+        return np.sum(w[a_vec >= b_vec])
+
+    def _discordance(a_vec, b_vec):
+        return np.max(np.maximum(b_vec - a_vec, 0.0) / ranges)
+
+    def _outranks(a_vec, b_vec):
+        return (_concordance(a_vec, b_vec) >= c_thresh and
+                _discordance(a_vec, b_vec) <= d_thresh)
+
+    delta = 1.0 / (2.0 * n_refs)
+    scores = np.zeros(n_alt)
+
+    for i in range(n_alt):
+        alt = weighted_mat[:, i]
+        alt_outranks_ref = [_outranks(alt, ref_profiles[:, k]) for k in range(n_refs)]
+        ref_outranks_alt = [_outranks(ref_profiles[:, k], alt) for k in range(n_refs)]
+
+        # Upper: highest score among refs that alt outranks
+        upper = max((ref_scores[k] for k in range(n_refs) if alt_outranks_ref[k]),
+                    default=None)
+        # Lower: lowest score among refs that outrank alt
+        lower = min((ref_scores[k] for k in range(n_refs) if ref_outranks_alt[k]),
+                    default=None)
+
+        if upper is None and lower is None:
+            scores[i] = 0.5          # incomparable — assign midpoint
+        elif upper is None:
+            scores[i] = lower - delta  # below all references
+        elif lower is None:
+            scores[i] = upper + delta  # above all references
+        else:
+            scores[i] = (upper + lower) / 2.0
+
     return rank_with_ties(scores, ascending=False)
 
 
@@ -546,12 +599,12 @@ def waspas_full(weighted_mat, weights, lam=0.5):
 MCDM_FUNCS = {
     "topsis": lambda wm, w: topsis(wm),
     "vikor": lambda wm, w: vikor(wm, w),
-    "electre": lambda wm, w: electre1(wm, w),
+    "electre": lambda wm, w: electre_score(wm, w),
     "multimoora": lambda wm, w: multimoora(wm),
     "waspas": lambda wm, w: waspas_full(wm, w),
 }
 METHOD_LABELS = {
-    "topsis": "TOPSIS", "vikor": "VIKOR", "electre": "ELECTRE I",
+    "topsis": "TOPSIS", "vikor": "VIKOR", "electre": "ELECTRE-Score",
     "multimoora": "MULTIMOORA", "waspas": "WASPAS",
 }
 ALL_MCDM_KEYS = ["topsis", "vikor", "electre", "multimoora", "waspas"]
@@ -724,6 +777,343 @@ STEP_LABELS = [
     "14. Analytics (optional)",
 ]
 
+
+def build_excel_report():
+    """Build a full Excel report from current session state."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    HDR_FONT   = Font(name="Times New Roman", bold=True, color="FFFFFF", size=11)
+    HDR_FILL   = PatternFill("solid", fgColor="0D2B5E")
+    HDR_ALIGN  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    BODY_FONT  = Font(name="Times New Roman", size=10)
+    BODY_ALIGN = Alignment(horizontal="center", vertical="center")
+    TITLE_FONT = Font(name="Times New Roman", bold=True, size=12, color="0D2B5E")
+    thin = Side(style="thin", color="D0D0D0")
+    BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def style_header(ws, row, cols):
+        for c in range(1, cols + 1):
+            cell = ws.cell(row=row, column=c)
+            cell.font = HDR_FONT
+            cell.fill = HDR_FILL
+            cell.alignment = HDR_ALIGN
+            cell.border = BORDER
+
+    def style_body(ws, row, cols):
+        for c in range(1, cols + 1):
+            cell = ws.cell(row=row, column=c)
+            cell.font = BODY_FONT
+            cell.alignment = BODY_ALIGN
+            cell.border = BORDER
+
+    def auto_width(ws):
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                try:
+                    max_len = max(max_len, len(str(cell.value or "")))
+                except:
+                    pass
+            ws.column_dimensions[col_letter].width = min(max(max_len + 2, 10), 40)
+
+    def add_title(ws, title):
+        ws.cell(1, 1, title).font = TITLE_FONT
+        ws.row_dimensions[1].height = 20
+
+    ss = st.session_state
+    names    = ss.proc_names
+    n_proc   = len(names)
+    l3_cats  = ordered_l3_cats()
+
+    # ── Sheet 1: Session Summary ──────────────────────────────────────────────
+    ws1 = wb.create_sheet("1. Session Summary")
+    add_title(ws1, "PRISM — Session Summary")
+    rows_s = [
+        ("Generated", datetime.now().strftime("%Y-%m-%d %H:%M")),
+        ("Tool", "PRISM — Performance Ranking via Integrated Sustainability Metrics"),
+        ("Institution", "Cranfield University — WAMC"),
+        ("Number of processes", n_proc),
+        ("Processes", ", ".join(names)),
+        ("Categories selected", ", ".join(CATS[c]["label"] for c in l3_cats)),
+        ("MCDM methods", ", ".join(METHOD_LABELS[m] for m in (list(ss.sel_mcdm_methods) or ALL_MCDM_KEYS))),
+        ("Weighting methods", ", ".join(ss.sel_weight_methods)),
+    ]
+    for ri, (k, v) in enumerate(rows_s, start=3):
+        ws1.cell(ri, 1, k).font = Font(name="Times New Roman", bold=True, size=10)
+        ws1.cell(ri, 2, str(v)).font = BODY_FONT
+    auto_width(ws1)
+
+    # ── Sheet 2: Decision Matrix ──────────────────────────────────────────────
+    ws2 = wb.create_sheet("2. Decision Matrix")
+    add_title(ws2, "Raw Indicator Values (Decision Matrix)")
+    col = 1
+    ws2.cell(3, 1, "Category").font = HDR_FONT
+    ws2.cell(3, 1).fill = HDR_FILL
+    ws2.cell(3, 1).alignment = HDR_ALIGN
+    ws2.cell(3, 2, "Indicator").font = HDR_FONT
+    ws2.cell(3, 2).fill = HDR_FILL
+    ws2.cell(3, 2).alignment = HDR_ALIGN
+    ws2.cell(3, 3, "Unit").font = HDR_FONT
+    ws2.cell(3, 3).fill = HDR_FILL
+    ws2.cell(3, 3).alignment = HDR_ALIGN
+    ws2.cell(3, 4, "Type").font = HDR_FONT
+    ws2.cell(3, 4).fill = HDR_FILL
+    ws2.cell(3, 4).alignment = HDR_ALIGN
+    for pi, name in enumerate(names):
+        ws2.cell(3, 5 + pi, name).font = HDR_FONT
+        ws2.cell(3, 5 + pi).fill = HDR_FILL
+        ws2.cell(3, 5 + pi).alignment = HDR_ALIGN
+    style_header(ws2, 3, 4 + n_proc)
+    row = 4
+    for ckey in l3_cats:
+        ind_names, ind_units, benefits = get_full_indicators(ckey)
+        for j in range(len(ind_names)):
+            ws2.cell(row, 1, CATS[ckey]["label"]).font = BODY_FONT
+            ws2.cell(row, 2, ind_names[j]).font = BODY_FONT
+            ws2.cell(row, 3, ind_units[j]).font = BODY_FONT
+            ws2.cell(row, 4, "Benefit" if benefits[j] else "Cost").font = BODY_FONT
+            for pi in range(n_proc):
+                val = ss.indicator_values.get((ckey, j, pi), 0.0)
+                ws2.cell(row, 5 + pi, round(float(val), 4)).font = BODY_FONT
+            style_body(ws2, row, 4 + n_proc)
+            row += 1
+    auto_width(ws2)
+
+    # ── Sheet 3: MEREC Weights ────────────────────────────────────────────────
+    if hasattr(ss, "merec_w") and ss.merec_w:
+        ws3 = wb.create_sheet("3. MEREC Weights")
+        add_title(ws3, "MEREC Indicator Weights")
+        headers = ["Category", "Indicator", "Unit", "MEREC Weight"]
+        for ci, h in enumerate(headers, 1):
+            ws3.cell(3, ci, h).font = HDR_FONT
+            ws3.cell(3, ci).fill = HDR_FILL
+            ws3.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws3, 3, 4)
+        row = 4
+        for ckey in l3_cats:
+            ind_names, ind_units, _ = get_full_indicators(ckey)
+            w_ind = ss.merec_w.get(ckey, np.zeros(len(ind_names)))
+            for j in range(len(ind_names)):
+                ws3.cell(row, 1, CATS[ckey]["label"]).font = BODY_FONT
+                ws3.cell(row, 2, ind_names[j]).font = BODY_FONT
+                ws3.cell(row, 3, ind_units[j]).font = BODY_FONT
+                ws3.cell(row, 4, round(float(w_ind[j]), 4)).font = BODY_FONT
+                style_body(ws3, row, 4)
+                row += 1
+        auto_width(ws3)
+
+    # ── Sheet 4: Category Scores ──────────────────────────────────────────────
+    if hasattr(ss, "cat_scores") and ss.cat_scores:
+        ws4 = wb.create_sheet("4. Category Scores")
+        add_title(ws4, "Category Scores (MEREC Weights × N2 Normalisation)")
+        headers = ["Category"] + names
+        for ci, h in enumerate(headers, 1):
+            ws4.cell(3, ci, h).font = HDR_FONT
+            ws4.cell(3, ci).fill = HDR_FILL
+            ws4.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws4, 3, 1 + n_proc)
+        for ri, ckey in enumerate(l3_cats, start=4):
+            ws4.cell(ri, 1, CATS[ckey]["label"]).font = BODY_FONT
+            scores = ss.cat_scores.get(ckey, np.zeros(n_proc))
+            for pi in range(n_proc):
+                ws4.cell(ri, 2 + pi, round(float(scores[pi]), 4)).font = BODY_FONT
+            style_body(ws4, ri, 1 + n_proc)
+        auto_width(ws4)
+
+    # ── Sheet 5: Category Weights ─────────────────────────────────────────────
+    if hasattr(ss, "final_cat_weights") and ss.final_cat_weights is not None:
+        ws5 = wb.create_sheet("5. Category Weights")
+        add_title(ws5, "Category Weights (RCW Consolidation)")
+        headers = ["Category", "RCW Weight", "RCW Weight (%)"]
+        for ci, h in enumerate(headers, 1):
+            ws5.cell(3, ci, h).font = HDR_FONT
+            ws5.cell(3, ci).fill = HDR_FILL
+            ws5.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws5, 3, 3)
+        for ri, ckey in enumerate(l3_cats, start=4):
+            w = float(ss.final_cat_weights[ri - 4])
+            ws5.cell(ri, 1, CATS[ckey]["label"]).font = BODY_FONT
+            ws5.cell(ri, 2, round(w, 4)).font = BODY_FONT
+            ws5.cell(ri, 3, round(w * 100, 1)).font = BODY_FONT
+            style_body(ws5, ri, 3)
+        auto_width(ws5)
+
+    # ── Sheet 6: MCDM Results ─────────────────────────────────────────────────
+    methods = list(ss.sel_mcdm_methods) or ALL_MCDM_KEYS
+    mr = ss.get("last_method_ranks", {})
+    if mr:
+        ws6 = wb.create_sheet("6. MCDM Results")
+        add_title(ws6, "MCDM Rankings and PSI Compromise Rank")
+        headers = ["Process"] + [METHOD_LABELS[m] for m in methods]
+        if len(methods) > 1:
+            psi = calc_psi(mr, methods, 0.5)
+            psi_ranks = rank_with_ties(psi, ascending=False)
+            headers += ["PSI Score (p=0.5)", "PSI Rank"]
+        for ci, h in enumerate(headers, 1):
+            ws6.cell(3, ci, h).font = HDR_FONT
+            ws6.cell(3, ci).fill = HDR_FILL
+            ws6.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws6, 3, len(headers))
+        for pi, name in enumerate(names):
+            row_data = [name] + [int(mr[m][pi]) for m in methods if m in mr]
+            if len(methods) > 1:
+                row_data += [round(float(psi[pi]), 4), int(psi_ranks[pi])]
+            for ci, val in enumerate(row_data, 1):
+                ws6.cell(4 + pi, ci, val).font = BODY_FONT
+            style_body(ws6, 4 + pi, len(headers))
+        auto_width(ws6)
+
+    # ── Sheet 7: PSI Curve Data ───────────────────────────────────────────────
+    if mr and len(methods) > 1:
+        ws7 = wb.create_sheet("7. PSI Curve Data")
+        add_title(ws7, "PSI Score vs p Value")
+        headers = ["p value"] + names
+        for ci, h in enumerate(headers, 1):
+            ws7.cell(3, ci, h).font = HDR_FONT
+            ws7.cell(3, ci).fill = HDR_FILL
+            ws7.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws7, 3, len(headers))
+        p_range = np.linspace(0, 1, 21)
+        for ri, p in enumerate(p_range, start=4):
+            psi_p = calc_psi(mr, methods, float(p))
+            ws7.cell(ri, 1, round(float(p), 2)).font = BODY_FONT
+            for pi in range(n_proc):
+                ws7.cell(ri, 2 + pi, round(float(psi_p[pi]), 4)).font = BODY_FONT
+            style_body(ws7, ri, len(headers))
+        auto_width(ws7)
+
+    # ── Sheet 8: Validation — Weighting Sensitivity ──────────────────────────
+    if "export_weight_sens" in ss:
+        df_ws = ss["export_weight_sens"]
+        ws8 = wb.create_sheet("8. Weighting Sensitivity")
+        add_title(ws8, "Validation — Weighting Method Sensitivity")
+        for ci, h in enumerate(df_ws.columns, 1):
+            ws8.cell(3, ci, h).font = HDR_FONT
+            ws8.cell(3, ci).fill = HDR_FILL
+            ws8.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws8, 3, len(df_ws.columns))
+        for ri, row_data in enumerate(df_ws.itertuples(index=False), start=4):
+            for ci, val in enumerate(row_data, 1):
+                ws8.cell(ri, ci, val).font = BODY_FONT
+            style_body(ws8, ri, len(df_ws.columns))
+        auto_width(ws8)
+
+    # ── Sheet 9: Validation — B/C Sensitivity ────────────────────────────────
+    if "export_bc_sens" in ss:
+        df_bc = ss["export_bc_sens"]
+        ws9 = wb.create_sheet("9. BC Sensitivity")
+        add_title(ws9, "Validation — Benefit/Cost Indicator Sensitivity")
+        for ci, h in enumerate(df_bc.columns, 1):
+            ws9.cell(3, ci, h).font = HDR_FONT
+            ws9.cell(3, ci).fill = HDR_FILL
+            ws9.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws9, 3, len(df_bc.columns))
+        for ri, row_data in enumerate(df_bc.itertuples(index=False), start=4):
+            for ci, val in enumerate(row_data, 1):
+                ws9.cell(ri, ci, val).font = BODY_FONT
+            style_body(ws9, ri, len(df_bc.columns))
+        auto_width(ws9)
+
+    # ── Sheet 10: Validation — Monte Carlo ───────────────────────────────────
+    if "export_mc" in ss:
+        rc = ss["export_mc"]  # dict: method -> (n_proc, n_proc) array
+        ws10 = wb.create_sheet("10. Monte Carlo")
+        add_title(ws10, "Validation — Monte Carlo Uncertainty (10,000 Dirichlet draws)")
+        ws10.cell(3, 1, "Method").font = HDR_FONT
+        ws10.cell(3, 1).fill = HDR_FILL
+        ws10.cell(3, 2, "Process").font = HDR_FONT
+        ws10.cell(3, 2).fill = HDR_FILL
+        for ri in range(1, n_proc + 1):
+            ws10.cell(3, 2 + ri, f"Rank {ri} (%)").font = HDR_FONT
+            ws10.cell(3, 2 + ri).fill = HDR_FILL
+        style_header(ws10, 3, 2 + n_proc)
+        row = 4
+        for m, counts in rc.items():
+            for pi in range(n_proc):
+                ws10.cell(row, 1, METHOD_LABELS.get(m, m)).font = BODY_FONT
+                ws10.cell(row, 2, names[pi]).font = BODY_FONT
+                for ri in range(n_proc):
+                    ws10.cell(row, 3 + ri,
+                              round(float(counts[pi, ri]) * 100, 1)).font = BODY_FONT
+                style_body(ws10, row, 2 + n_proc)
+                row += 1
+        auto_width(ws10)
+
+    # ── Sheet 11: Validation — Rank Reversal ─────────────────────────────────
+    if "export_rank_reversal" in ss:
+        rr = ss["export_rank_reversal"]
+        df_rr = rr["df"]
+        ws11 = wb.create_sheet("11. Rank Reversal")
+        add_title(ws11, f"Validation — Rank-Reversal Test (Excluded: {', '.join(rr['excluded'])})")
+        for ci, h in enumerate(df_rr.columns, 1):
+            ws11.cell(3, ci, h).font = HDR_FONT
+            ws11.cell(3, ci).fill = HDR_FILL
+            ws11.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws11, 3, len(df_rr.columns))
+        for ri, row_data in enumerate(df_rr.itertuples(index=False), start=4):
+            for ci, val in enumerate(row_data, 1):
+                ws11.cell(ri, ci, val).font = BODY_FONT
+            style_body(ws11, ri, len(df_rr.columns))
+        auto_width(ws11)
+
+    # ── Sheet 12: Validation — Normalisation Sensitivity ─────────────────────
+    if "export_norm_sens" in ss:
+        ns = ss["export_norm_sens"]
+        df_ns = ns["df"]
+        ws12 = wb.create_sheet("12. Norm Sensitivity")
+        add_title(ws12, f"Validation — Normalisation Sensitivity (N2 vs {ns['alt_norm']})")
+        for ci, h in enumerate(df_ns.columns, 1):
+            ws12.cell(3, ci, h).font = HDR_FONT
+            ws12.cell(3, ci).fill = HDR_FILL
+            ws12.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws12, 3, len(df_ns.columns))
+        for ri, row_data in enumerate(df_ns.itertuples(index=False), start=4):
+            for ci, val in enumerate(row_data, 1):
+                ws12.cell(ri, ci, val).font = BODY_FONT
+            style_body(ws12, ri, len(df_ns.columns))
+        auto_width(ws12)
+
+    # ── Sheet 13: Analytics — Category Contribution ───────────────────────────
+    if "export_cat_contrib" in ss:
+        df_cc = ss["export_cat_contrib"]
+        ws13 = wb.create_sheet("13. Category Contribution")
+        add_title(ws13, "Analytics — Category Weighted Contribution")
+        for ci, h in enumerate(df_cc.columns, 1):
+            ws13.cell(3, ci, h).font = HDR_FONT
+            ws13.cell(3, ci).fill = HDR_FILL
+            ws13.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws13, 3, len(df_cc.columns))
+        for ri, row_data in enumerate(df_cc.itertuples(index=False), start=4):
+            for ci, val in enumerate(row_data, 1):
+                ws13.cell(ri, ci, val).font = BODY_FONT
+            style_body(ws13, ri, len(df_cc.columns))
+        auto_width(ws13)
+
+    # ── Sheet 14: Analytics — Stakeholder Simulation ──────────────────────────
+    if "export_stakeholder" in ss:
+        df_sh = ss["export_stakeholder"]
+        ws14 = wb.create_sheet("14. Stakeholder Simulation")
+        add_title(ws14, "Analytics — Stakeholder Preference Simulation")
+        for ci, h in enumerate(df_sh.columns, 1):
+            ws14.cell(3, ci, h).font = HDR_FONT
+            ws14.cell(3, ci).fill = HDR_FILL
+            ws14.cell(3, ci).alignment = HDR_ALIGN
+        style_header(ws14, 3, len(df_sh.columns))
+        for ri, row_data in enumerate(df_sh.itertuples(index=False), start=4):
+            for ci, val in enumerate(row_data, 1):
+                ws14.cell(ri, ci, val).font = BODY_FONT
+            style_body(ws14, ri, len(df_sh.columns))
+        auto_width(ws14)
+
+    # Finalise
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 with st.sidebar:
     st.markdown(
         "<h2 style='margin-bottom:0;font-size:22px;color:#0D2B5E;"
@@ -782,6 +1172,34 @@ with st.sidebar:
                 )
 
     st.divider()
+
+    # Download report — always accessible
+    if OPENPYXL_OK:
+        mr_ready = bool(st.session_state.get("last_method_ranks", {}))
+        if mr_ready:
+            try:
+                excel_buf = build_excel_report()
+                fname = f"PRISM_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+                st.download_button(
+                    label="📥 Download Excel report",
+                    data=excel_buf,
+                    file_name=fname,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.caption(f"Report error: {e}")
+        else:
+            st.markdown(
+                "<p style='font-size:11px;color:#9CA3AF;text-align:center;"
+                "font-family:Times New Roman,serif;'>"
+                "Run through Step 12 to enable report download.</p>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("Install openpyxl to enable Excel export.")
+
+    st.divider()
     if st.button("Reset", use_container_width=True):
         reset_all()
         st.rerun()
@@ -829,8 +1247,8 @@ def landing_page():
         st.markdown(
             "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
             "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
-            "The framework evaluates alternatives across six sustainability dimensions: "
-            "Environmental, Economic, Social, Quality, Productivity, and Circularity. "
+            "The framework evaluates alternatives across five sustainability dimensions: "
+            "Environmental, Economic, Social, Quality, and Productivity. "
             "An integrated validation suite and analytics layer provide robustness "
             "evidence and stakeholder-oriented sensitivity analysis.</p>",
             unsafe_allow_html=True,
@@ -1326,15 +1744,18 @@ def step8():
         )
 
         apply_mpl_style()
+        shorts = proc_short_labels(names)
         fig, ax = plt.subplots(figsize=(6, max(1.2, 0.45 * len(names))))
-        bars = ax.barh(names, scores, color=cat["color"], edgecolor="white")
-        for bar, val in zip(bars, scores):
-            ax.text(bar.get_width() + max(scores)*0.01, bar.get_y() + bar.get_height()/2,
-                    f"{val:.4f}", va="center", ha="left", fontsize=9, color="#0D2B5E")
-        ax.set_xlim(0, max(scores) * 1.18)
+        bars = ax.barh(shorts, scores, color=cat["color"], edgecolor="white")
+        ax.set_xlim(0, max(scores) * 1.05)
         ax.tick_params(axis="both", labelsize=9)
         plt.tight_layout()
         mpl_show(fig)
+        # Values in table
+        score_rows = [{"Process": n, "Category score": round(float(s), 4)}
+                      for n, s in zip(names, scores)]
+        st.dataframe(pd.DataFrame(score_rows), use_container_width=True,
+                     hide_index=True)
 
     st.divider()
     c1, c2 = st.columns(2)
@@ -1451,7 +1872,7 @@ def step11():
         "Outranking": {
             "description": "Compare alternatives pairwise using concordance and discordance.",
             "methods": {
-                "electre": ("ELECTRE I", "ELimination Et Choix Traduisant la REalité"),
+                "electre": ("ELECTRE-Score", "Figueira, Greco & Roy (2022) — Outranking-based continuous scoring"),
             },
         },
         "Aggregation": {
@@ -1549,7 +1970,18 @@ def step12():
     if multi:
         st.divider()
         st.subheader("PSI curve")
-        st.caption("PSI_i = M_i^p x A_i^(1-p)  ;  M_i = 1/Rbar  ;  A_i = 1/(1+CV)  ;  p in (0,1)")
+        st.markdown(
+            "<p style='font-family:Times New Roman,serif;font-size:13px;"
+            "color:#0D2B5E;margin:4px 0;text-align:center;'>"
+            "<b>PSI</b><sub>i</sub> = "
+            "<i>M</i><sub>i</sub><sup>p</sup> × "
+            "<i>A</i><sub>i</sub><sup>(1−p)</sup> &nbsp;|&nbsp; "
+            "<i>M</i><sub>i</sub> = 1 / <i>R̄</i><sub>i</sub> &nbsp;|&nbsp; "
+            "<i>A</i><sub>i</sub> = 1 / (1 + <i>CV</i><sub>i</sub>) &nbsp;|&nbsp; "
+            "<i>p</i> ∈ (0, 1)"
+            "</p>",
+            unsafe_allow_html=True,
+        )
 
         p_val = st.slider("p (stability <-> performance)", min_value=0.01, max_value=0.99,
                            value=0.5, step=0.01, key="psi_p_slider")
@@ -1603,23 +2035,57 @@ def step12():
 
         apply_mpl_style()
         n_combos_b = len(combos)
-        fig, ax = plt.subplots(figsize=(max(8, n_combos_b * 0.22), 4.2))
+        # Jitter overlapping points slightly so all are visible
+        jitter_step = 0.12
+        fig_combo = go.Figure()
         for pi, name in enumerate(names):
-            ax.scatter(range(n_combos_b), rank_grid[pi, :],
-                       label=name, s=40, marker="s",
-                       color=PROC_COLORS[pi % len(PROC_COLORS)], zorder=3)
-        ax.set_xticks(range(n_combos_b))
-        ax.set_xticklabels(combo_labels, rotation=90, fontsize=7)
-        ax.set_ylabel("Rank", fontsize=10)
-        ax.set_xlabel("Category combination", fontsize=10)
-        ax.set_ylim(n_proc + 0.5, 0.5)
-        ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.1),
-                  ncol=len(names), fontsize=9, frameon=False)
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
-        ax.tick_params(labelsize=8)
-        plt.tight_layout()
-        mpl_show(fig)
+            offset = (pi - (len(names)-1)/2) * jitter_step
+            x_jit = [ci + offset for ci in range(n_combos_b)]
+            hover = [
+                f"<b>{name}</b><br>Combination: {combo_labels[ci]}<br>Rank: {rank_grid[pi, ci]}"
+                for ci in range(n_combos_b)
+            ]
+            fig_combo.add_trace(go.Scatter(
+                x=x_jit,
+                y=rank_grid[pi, :],
+                mode="markers",
+                name=name,
+                marker=dict(size=9, symbol="square",
+                            color=PROC_COLORS[pi % len(PROC_COLORS)]),
+                hovertemplate="%{customdata}<extra></extra>",
+                customdata=hover,
+            ))
+        fig_combo.update_layout(
+            xaxis=dict(
+                tickmode="array",
+                tickvals=list(range(n_combos_b)),
+                ticktext=combo_labels,
+                tickangle=-90,
+                tickfont=dict(size=9, family="Times New Roman"),
+                title="Category combination",
+                title_font=dict(family="Times New Roman", color="#0D2B5E"),
+            ),
+            yaxis=dict(
+                title="Rank",
+                autorange="reversed",
+                dtick=1, tick0=1,
+                range=[0.5, n_proc + 0.5],
+                gridcolor="rgba(0,0,0,0.1)",
+                gridwidth=1,
+                griddash="dash",
+                title_font=dict(family="Times New Roman", color="#0D2B5E"),
+                tickfont=dict(family="Times New Roman"),
+            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        font=dict(family="Times New Roman")),
+            height=420,
+            margin=dict(l=10, r=10, t=40, b=120),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            font=dict(family="Times New Roman", color="#0D2B5E"),
+            hoverlabel=dict(font_family="Times New Roman"),
+        )
+        st.plotly_chart(fig_combo, use_container_width=True)
 
     st.divider()
     c1, c2, c3, c4 = st.columns(4)
@@ -1750,6 +2216,9 @@ def validation_rank_reversal():
         rows_table.append(row)
 
     df_compare = pd.DataFrame(rows_table, columns=cols_table)
+    st.session_state["export_rank_reversal"] = {
+        "excluded": excluded, "df": df_compare
+    }
 
     st.markdown(
         f"**Excluded:** {', '.join(excluded)}  |  "
@@ -1878,8 +2347,9 @@ def validation_normalisation_sensitivity():
         f"**Baseline normalisation:** N2  |  "
         f"**Alternative:** {alt_norm_label}  |  p = {p_val:.2f}"
     )
-    st.dataframe(pd.DataFrame(rows_table, columns=cols_table),
-                 use_container_width=True, hide_index=True)
+    df_norm_export = pd.DataFrame(rows_table, columns=cols_table)
+    st.session_state["export_norm_sens"] = {"alt_norm": alt_norm_label, "df": df_norm_export}
+    st.dataframe(df_norm_export, use_container_width=True, hide_index=True)
 
     if reversal_found:
         st.warning(
@@ -1951,7 +2421,28 @@ def validation_weight_sensitivity():
                 rows[pi][col] = int(ranks[mkey][pi])
 
     df = pd.DataFrame(rows)
+    st.session_state["export_weight_sens"] = df
     st.dataframe(df, use_container_width=True, hide_index=True)
+    rank_cols = [c for c in df.columns if c != "Process"]
+    any_change = any(
+        len(set(df.loc[i, rank_cols].tolist())) > 1
+        for i in range(len(df))
+    )
+    if any_change:
+        st.markdown(
+            '<div style="background:#FFF8E1;border-left:3px solid #D97706;'
+            'padding:8px 12px;border-radius:4px;margin:6px 0;'
+            'font-family:Times New Roman,serif;color:#7B5800;font-size:13px;">'
+            'Rank variation detected across weighting schemes.</div>',
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="background:#E8F5E9;border-left:3px solid #16A34A;'
+            'padding:8px 12px;border-radius:4px;margin:6px 0;'
+            'font-family:Times New Roman,serif;color:#1B5E20;font-size:13px;">'
+            'No rank changes detected. The ranking is robust to category '
+            'weighting method choice.</div>',
+            unsafe_allow_html=True)
 
     st.divider()
     st.markdown("**Overall ranking across category combinations (this weighting scheme set)**")
@@ -1993,23 +2484,56 @@ def validation_weight_sensitivity():
 
     apply_mpl_style()
     n_combos_c = len(combos)
-    fig, ax = plt.subplots(figsize=(max(8, n_combos_c * 0.22), 4.2))
+    jitter_step = 0.12
+    fig_val_combo = go.Figure()
     for pi, name in enumerate(names):
-        ax.scatter(range(n_combos_c), rank_grid[pi, :],
-                   label=name, s=40, marker="s",
-                   color=PROC_COLORS[pi % len(PROC_COLORS)], zorder=3)
-    ax.set_xticks(range(n_combos_c))
-    ax.set_xticklabels(combo_labels, rotation=90, fontsize=7)
-    ax.set_ylabel("Rank", fontsize=10)
-    ax.set_xlabel("Category combination", fontsize=10)
-    ax.set_ylim(n_proc + 0.5, 0.5)
-    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.1),
-              ncol=len(names), fontsize=9, frameon=False)
-    ax.grid(axis="y", linestyle="--", alpha=0.4)
-    ax.tick_params(labelsize=8)
-    plt.tight_layout()
-    mpl_show(fig)
+        offset = (pi - (len(names)-1)/2) * jitter_step
+        x_jit = [ci + offset for ci in range(n_combos_c)]
+        hover = [
+            f"<b>{name}</b><br>Combination: {combo_labels[ci]}<br>Rank: {rank_grid[pi, ci]}"
+            for ci in range(n_combos_c)
+        ]
+        fig_val_combo.add_trace(go.Scatter(
+            x=x_jit,
+            y=rank_grid[pi, :],
+            mode="markers",
+            name=name,
+            marker=dict(size=9, symbol="square",
+                        color=PROC_COLORS[pi % len(PROC_COLORS)]),
+            hovertemplate="%{customdata}<extra></extra>",
+            customdata=hover,
+        ))
+    fig_val_combo.update_layout(
+        xaxis=dict(
+            tickmode="array",
+            tickvals=list(range(n_combos_c)),
+            ticktext=combo_labels,
+            tickangle=-90,
+            tickfont=dict(size=9, family="Times New Roman"),
+            title="Category combination",
+            title_font=dict(family="Times New Roman", color="#0D2B5E"),
+        ),
+        yaxis=dict(
+            title="Rank",
+            autorange="reversed",
+            dtick=1, tick0=1,
+            range=[0.5, n_proc + 0.5],
+            gridcolor="rgba(0,0,0,0.1)",
+            gridwidth=1,
+            griddash="dash",
+            title_font=dict(family="Times New Roman", color="#0D2B5E"),
+            tickfont=dict(family="Times New Roman"),
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    font=dict(family="Times New Roman")),
+        height=420,
+        margin=dict(l=10, r=10, t=40, b=120),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(family="Times New Roman", color="#0D2B5E"),
+        hoverlabel=dict(font_family="Times New Roman"),
+    )
+    st.plotly_chart(fig_val_combo, use_container_width=True)
 
 
 def validation_bc_sensitivity():
@@ -2049,13 +2573,18 @@ def validation_bc_sensitivity():
     st.markdown("**Baseline results (Step 12, unperturbed)**")
     st.dataframe(pd.DataFrame(base_rows, columns=cols), use_container_width=True, hide_index=True)
 
+    rng_bc = np.random.default_rng(42)
     cat_scores_pert = {}
     for ckey in l3_cats:
         raw, benefits = get_raw_matrix(ckey)
         raw_pert = raw.copy()
-        for j in range(raw.shape[0]):
+        n_ind_bc, n_p_bc = raw.shape
+        for j in range(n_ind_bc):
             pct = ben_pct if benefits[j] else cost_pct
-            raw_pert[j] = raw[j] * (1 + pct / 100.0)
+            half = abs(pct) * 0.5 if pct != 0 else 2.5
+            noise = rng_bc.uniform(-half, half, size=n_p_bc)
+            factors = 1 + (pct + noise) / 100.0
+            raw_pert[j] = np.maximum(raw[j] * factors, 1e-9)
         cat_scores_pert[ckey] = compute_category_score_from_raw(ckey, raw_pert)
 
     mat = np.array([cat_scores_pert[c] for c in l3_cats])
@@ -2080,7 +2609,9 @@ def validation_bc_sensitivity():
         f"**Perturbed results** - Benefit indicators: **{ben_pct:+d}%**, "
         f"Cost indicators: **{cost_pct:+d}%**, p = **{p_val:.2f}**"
     )
-    st.dataframe(pd.DataFrame(p_rows, columns=p_cols), use_container_width=True, hide_index=True)
+    df_bc_export = pd.DataFrame(p_rows, columns=p_cols)
+    st.session_state["export_bc_sens"] = df_bc_export
+    st.dataframe(df_bc_export, use_container_width=True, hide_index=True)
 
 
 def validation_monte_carlo():
@@ -2096,10 +2627,15 @@ def validation_monte_carlo():
     mat = np.array([cat_scores[c] for c in l3_cats])
     k_value, w_eq, w_en, w_cr = compute_dirichlet_k(mat)
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         st.metric("Data-driven k (inter-method agreement)", f"{k_value:.1f} / 100")
     with c2:
+        use_custom_k = st.checkbox("Override k manually", value=False, key="mc_use_custom_k")
+        if use_custom_k:
+            k_value = st.slider("k value", min_value=1.0, max_value=100.0,
+                                 value=float(min(k_value, 50.0)), step=1.0, key="mc_k_override")
+    with c3:
         p_val = st.slider("p value (for PSI compromise rank)", min_value=0.0, max_value=1.0,
                            value=0.5, step=0.01, key="mc_p_slider")
 
@@ -2114,7 +2650,7 @@ def validation_monte_carlo():
 
     if run_mc:
         n_iter = 10000
-        alpha_scale = 2.0 + (k_value / 100.0) * 200.0
+        alpha_scale = 1.0 + (k_value / 100.0) * 49.0  # range 1-50
         alpha = np.maximum(final_w * alpha_scale, 0.05)
 
         rng = np.random.default_rng()
@@ -2144,6 +2680,7 @@ def validation_monte_carlo():
         progress.progress(1.0, text="Done.")
 
         st.session_state.mc_rank_counts = rank_counts
+        st.session_state["export_mc"] = rank_counts
         st.session_state.mc_psi_rank_counts = psi_rank_counts
         st.session_state.mc_n_iter = n_iter
         st.session_state.mc_methods_used = sel_mcdm_methods
@@ -2200,21 +2737,17 @@ def analytics_category_weighted_contribution():
 
     # ── Stacked bar chart ────────────────────────────────────────────────────
     apply_mpl_style()
+    shorts = proc_short_labels(names)
     fig, ax = plt.subplots(figsize=(max(5, len(names)*1.5), 3.8))
     bottoms_d = np.zeros(len(names))
     for ci, ckey in enumerate(l3_cats):
-        ax.bar(names, contribs[ci], bottom=bottoms_d,
+        ax.bar(shorts, contribs[ci], bottom=bottoms_d,
                color=CATS[ckey]["color"], label=CATS[ckey]["label"],
                edgecolor="white", linewidth=0.5)
-        for pi in range(len(names)):
-            if contribs[ci][pi] > 0.005:
-                ax.text(pi, bottoms_d[pi] + contribs[ci][pi]/2,
-                        f"{contribs[ci][pi]:.4f}", ha="center", va="center",
-                        fontsize=8, color="white", fontweight="bold")
         bottoms_d += contribs[ci]
     ax.set_ylabel("Weighted category score", fontsize=10)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.14),
-              ncol=len(l3_cats), fontsize=8, frameon=False)
+              ncol=min(len(l3_cats), 3), fontsize=8, frameon=False)
     ax.tick_params(labelsize=9)
     plt.tight_layout()
     mpl_show(fig)
@@ -2228,7 +2761,9 @@ def analytics_category_weighted_contribution():
             pct = (contribs[ci, pi] / totals[pi] * 100) if totals[pi] > 0 else 0.0
             row[f"{CATS[ckey]['label']} (%)"] = round(pct, 1)
         rows.append(row)
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    df_cat_contrib = pd.DataFrame(rows)
+    st.session_state["export_cat_contrib"] = df_cat_contrib
+    st.dataframe(df_cat_contrib, use_container_width=True, hide_index=True)
 
     # ── Category weight table ─────────────────────────────────────────────────
     st.markdown("**RCW category weights applied**")
@@ -2431,25 +2966,24 @@ def analytics_indicator_contribution():
 
         # Grouped bar chart — one group per indicator
         apply_mpl_style()
+        shorts = proc_short_labels(names)
         ind_labels_c = [f"{ind_names[j]} ({ind_units[j]})" for j in range(n_ind)]
-        x = np.arange(n_ind)
-        w_bar = 0.8 / len(names)
-        fig, ax = plt.subplots(figsize=(max(5, n_ind*1.4), 2.8))
-        for pi, name in enumerate(names):
-            offsets = x + (pi - len(names)/2 + 0.5) * w_bar
-            vals = [float(shares[j, pi]) for j in range(n_ind)]
-            ax.bar(offsets, vals, width=w_bar*0.9,
-                   color=PROC_COLORS[pi % len(PROC_COLORS)], label=name)
-            for ox, v in zip(offsets, vals):
-                if v > 1:
-                    ax.text(ox, v + 0.5, f"{v:.1f}%", ha="center",
-                            fontsize=7, color="#0D2B5E")
+        x = np.arange(len(names))
+        w_bar = 0.7 / n_ind
+        fig, ax = plt.subplots(figsize=(max(5, len(names)*1.5), 2.8))
+        for j in range(n_ind):
+            offsets = x + (j - n_ind/2 + 0.5) * w_bar
+            vals = [float(shares[j, pi]) for pi in range(len(names))]
+            ax.bar(offsets, vals, width=w_bar*0.85,
+                   color=CATS[ckey]["color"],
+                   alpha=0.5 + 0.5*(j/max(n_ind-1,1)),
+                   label=ind_names[j], edgecolor="white")
         ax.set_xticks(x)
-        ax.set_xticklabels(ind_labels_c, rotation=20, ha="right", fontsize=8)
+        ax.set_xticklabels(shorts, fontsize=9)
         ax.set_ylabel("Contribution share (%)", fontsize=10)
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12),
-                  ncol=len(names), fontsize=8, frameon=False)
-        ax.tick_params(labelsize=8)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.14),
+                  ncol=min(n_ind, 3), fontsize=8, frameon=False)
+        ax.tick_params(labelsize=9)
         plt.tight_layout()
         mpl_show(fig)
         st.write("")
@@ -2716,8 +3250,9 @@ def analytics_stakeholder_preference():
                             else str(delta) if delta != 0 else "—"),
         })
 
-    st.dataframe(pd.DataFrame(comp_rows),
-                 use_container_width=True, hide_index=True)
+    df_sh = pd.DataFrame(comp_rows)
+    st.session_state["export_stakeholder"] = df_sh
+    st.dataframe(df_sh, use_container_width=True, hide_index=True)
 
     if any_change:
         st.warning(
@@ -2773,6 +3308,7 @@ def analytics_stakeholder_preference():
     st.markdown("**PSI score comparison — Original vs stakeholder**")
 
     apply_mpl_style()
+    shorts = proc_short_labels(names)
     x_p = np.arange(n_proc)
     w_bar_p = 0.35
     fig, ax = plt.subplots(figsize=(max(5, n_proc*1.2), 3.0))
@@ -2782,14 +3318,8 @@ def analytics_stakeholder_preference():
            color="#185FA5", label="Original PSI (RCW)", edgecolor="white")
     ax.bar(x_p + w_bar_p/2, cust_vals, width=w_bar_p,
            color="#EA580C", label="Stakeholder PSI",    edgecolor="white")
-    ymax = max(max(base_vals), max(cust_vals))
-    for xi, (bv, cv) in enumerate(zip(base_vals, cust_vals)):
-        ax.text(xi - w_bar_p/2, bv + ymax*0.01, f"{bv:.4f}",
-                ha="center", fontsize=7, color="#0D2B5E")
-        ax.text(xi + w_bar_p/2, cv + ymax*0.01, f"{cv:.4f}",
-                ha="center", fontsize=7, color="#0D2B5E")
     ax.set_xticks(x_p)
-    ax.set_xticklabels(names, fontsize=9)
+    ax.set_xticklabels(shorts, fontsize=9)
     ax.set_ylabel("PSI score", fontsize=10)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12),
               ncol=2, fontsize=9, frameon=False)
@@ -2797,191 +3327,16 @@ def analytics_stakeholder_preference():
     plt.tight_layout()
     mpl_show(fig)
 
-
-def analytics_indicator_robustness():
-    st.subheader("4. Indicator robustness analysis")
-
-    names = st.session_state.proc_names
-    n_proc = len(names)
-    l3_cats = ordered_l3_cats()
-    sel_weight_methods = st.session_state.sel_weight_methods
-    sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
-    method_ranks = st.session_state.get("last_method_ranks", {})
-    multi = len(sel_mcdm_methods) > 1
-
-    if not multi:
-        st.warning("Need at least 2 MCDM methods for PSI-based robustness analysis.")
-        return
-
-    # Build full indicator list
-    all_indicators = []
-    for ckey in l3_cats:
-        ind_names, ind_units, benefits = get_full_indicators(ckey)
-        for j, (iname, iunit) in enumerate(zip(ind_names, ind_units)):
-            all_indicators.append({
-                "ckey": ckey, "j": j,
-                "label": f"{CATS[ckey]['label']} — {iname} ({iunit})",
-                "benefit": benefits[j],
-            })
-
-    if not all_indicators:
-        st.warning("No indicators available.")
-        return
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        sel_label = st.selectbox(
-            "Indicator to vary", [ind["label"] for ind in all_indicators],
-            key="rob_ind_sel"
-        )
-    with c2:
-        range_pct = st.slider(
-            "Sweep range (% of current value)",
-            min_value=50, max_value=500, value=200, step=50,
-            key="rob_range_pct"
-        )
-    with c3:
-        p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                           value=0.5, step=0.01, key="rob_p_slider")
-
-    sel_ind = next(ind for ind in all_indicators if ind["label"] == sel_label)
-    ckey_s, j_s = sel_ind["ckey"], sel_ind["j"]
-    benefit = sel_ind["benefit"]
-
-    # Current values for this indicator across all processes
-    cur_vals = np.array([
-        st.session_state.indicator_values.get((ckey_s, j_s, pi), 0.0)
-        for pi in range(n_proc)
-    ])
-
-    # Sweep range — vary the indicator across all processes simultaneously
-    # using process-specific current values as anchors
-    # We sweep a multiplier from low to high
-    lo_mult = max(0.05, 1 - range_pct/100)
-    hi_mult = 1 + range_pct/100
-    steps = 100
-    multipliers = np.linspace(lo_mult, hi_mult, steps)
-
-    # For each multiplier, rerun full pipeline
-    rank_trajectories = np.zeros((n_proc, steps), dtype=int)
-
-    for si, mult in enumerate(multipliers):
-        # Override indicator values for all processes
-        new_cat_scores = {}
-        for ckey in l3_cats:
-            ind_names_, ind_units_, benefits_ = get_full_indicators(ckey)
-            n_ind_ = len(ind_names_)
-            raw, _ = get_raw_matrix(ckey)
-            raw_mod = raw.copy()
-            if ckey == ckey_s:
-                raw_mod[j_s, :] = cur_vals * mult
-            nm = np.zeros_like(raw_mod)
-            n2 = np.zeros_like(raw_mod)
-            for j in range(n_ind_):
-                nm[j] = merec_norm(raw_mod[j], benefits_[j])
-                n2[j] = n2_norm(raw_mod[j], benefits_[j])
-            w_ind = merec_weights(nm)
-            new_cat_scores[ckey] = (n2 * w_ind[:, None]).sum(axis=0)
-
-        mat = np.array([new_cat_scores[c] for c in l3_cats])
-        w_cat = get_category_weights(mat, sel_weight_methods)
-        wm = mat * w_cat[:, None]
-        ranks_ = run_mcdm_suite(wm, w_cat, sel_mcdm_methods)
-        psi_ = calc_psi(ranks_, sel_mcdm_methods, p_val)
-        psi_ranks = rank_with_ties(psi_, ascending=False)
-        for pi in range(n_proc):
-            rank_trajectories[pi, si] = int(psi_ranks[pi])
-
-    # Current multiplier index (closest to 1.0)
-    cur_idx = np.argmin(np.abs(multipliers - 1.0))
-
-    # X axis values: actual indicator values (use process 0 as reference scale)
-    # Use multiplier * mean current value as x axis label
-    mean_cur = cur_vals.mean() if cur_vals.mean() > 0 else 1.0
-    x_vals = multipliers * mean_cur
-
-    # ── Matplotlib chart ──────────────────────────────────────────────────────
-    apply_mpl_style()
-    fig, ax = plt.subplots(figsize=(8, 3.8))
-
-    linestyles = ["-", "--", ":"]
+    # Values in table
+    psi_table_rows = []
     for pi, name in enumerate(names):
-        ax.plot(x_vals, rank_trajectories[pi],
-                label=name, linewidth=2,
-                color=PROC_COLORS[pi % len(PROC_COLORS)],
-                linestyle=linestyles[pi % len(linestyles)])
-
-    # Mark current position
-    ax.axvline(x=mean_cur, color="#888888", linestyle="--",
-                linewidth=1, label="Current value")
-
-    ax.set_xlabel(sel_ind["label"], fontsize=10)
-    ax.set_ylabel("PSI rank", fontsize=10)
-    ax.set_ylim(n_proc + 0.5, 0.5)
-    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"Rank {int(v)}" if v == int(v) else ""))
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12),
-              ncol=n_proc + 1, fontsize=9, frameon=False)
-    ax.grid(axis="y", linestyle="--", alpha=0.4)
-    ax.tick_params(labelsize=9)
-    plt.tight_layout()
-    mpl_show(fig)
-
-    # ── Rank stability intervals table ────────────────────────────────────────
-    st.markdown("**Rank stability intervals**")
-
-    unit = sel_ind["label"].split("(")[-1].rstrip(")")
-    rows_stab = []
-    for pi, name in enumerate(names):
-        traj = rank_trajectories[pi]
-        intervals = []
-        cur_r = traj[0]
-        start_x = x_vals[0]
-        for si in range(1, steps):
-            if traj[si] != cur_r:
-                intervals.append({"Rank": int(cur_r),
-                                   "From": round(float(start_x), 2),
-                                   "To": round(float(x_vals[si-1]), 2)})
-                cur_r = traj[si]
-                start_x = x_vals[si]
-        intervals.append({"Rank": int(cur_r),
-                           "From": round(float(start_x), 2),
-                           "To": round(float(x_vals[-1]), 2)})
-
-        for iv in intervals:
-            rows_stab.append({
-                "Process": name,
-                "PSI rank": iv["Rank"],
-                f"From ({unit})": iv["From"],
-                f"To ({unit})": iv["To"],
-                "Contains current value": "✓" if iv["From"] <= mean_cur <= iv["To"] else "",
-            })
-
-    st.dataframe(pd.DataFrame(rows_stab),
-                 use_container_width=True, hide_index=True)
-
-    # ── Key insight ───────────────────────────────────────────────────────────
-    st.divider()
-    insights = []
-    for pi, name in enumerate(names):
-        cur_rank = int(rank_trajectories[pi, cur_idx])
-        # Find range where current rank holds
-        stable_from, stable_to = None, None
-        for si in range(steps):
-            if rank_trajectories[pi, si] == cur_rank:
-                if stable_from is None:
-                    stable_from = x_vals[si]
-                stable_to = x_vals[si]
-        if stable_from is not None:
-            pct_range = round((stable_to - stable_from) / mean_cur * 100, 1)
-            insights.append(
-                f"**{name}** — rank {cur_rank} stable across "
-                f"{stable_from:.2f} to {stable_to:.2f} {unit} "
-                f"({pct_range}% of current value range)"
-            )
-
-    for ins in insights:
-        st.markdown(ins)
+        psi_table_rows.append({
+            "Process": name,
+            "Original PSI (RCW)": round(float(base_psi[pi]), 4),
+            "Stakeholder PSI": round(float(psi_custom[pi]), 4),
+            "Δ PSI": round(float(psi_custom[pi]) - float(base_psi[pi]), 4),
+        })
+    st.dataframe(pd.DataFrame(psi_table_rows), use_container_width=True, hide_index=True)
 
 
 
@@ -2995,7 +3350,6 @@ def auxiliary_intro():
             "1. Category-wise contribution analysis",
             "2. Indicator-wise analysis",
             "3. Stakeholder preference simulation",
-            "4. Indicator robustness analysis",
         ],
         index=0, key="auxiliary_radio",
     )
@@ -3006,8 +3360,6 @@ def auxiliary_intro():
         analytics_indicator_intro()
     elif choice.startswith("3."):
         analytics_stakeholder_preference()
-    elif choice.startswith("4."):
-        analytics_indicator_robustness()
 
     st.divider()
     c1, c2, c3 = st.columns(3)
