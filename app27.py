@@ -1872,7 +1872,7 @@ def step11():
         "Outranking": {
             "description": "Compare alternatives pairwise using concordance and discordance.",
             "methods": {
-                "electre": ("ELECTRE-Score", "Figueira, Greco & Roy (2022) — Outranking-based continuous scoring"),
+                "electre": ("ELECTRE-Score", "Outranking-based continuous scoring"),
             },
         },
         "Aggregation": {
