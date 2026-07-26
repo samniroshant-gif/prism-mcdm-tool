@@ -308,11 +308,11 @@ CATEGORY_ORDER = ["env", "eco", "soc", "qua", "pro"]
 CATS = {
     "env": {
         "label": "Environmental", "color": "#0F6E56", "bg": "#E1F5EE",
-        "indicators": ["Cumulative energy demand", "CO2 emissions", "Water consumption"],
-        "default_units": ["MJ", "kg CO2-eq", "L"],
+        "indicators": ["Cumulative energy demand", "CO₂ emissions", "Water consumption"],
+        "default_units": ["MJ", "kg CO₂-eq", "L"],
         "unit_options": [
             ["MJ", "GJ", "kWh", "MJ/kg"],
-            ["kg CO2-eq", "t CO2-eq", "g CO2-eq"],
+            ["kg CO₂-eq", "t CO₂-eq", "g CO₂-eq"],
             ["L", "m3", "mL", "kg"],
         ],
         "benefit": [False, False, False],
@@ -334,7 +334,7 @@ CATS = {
         "indicators": ["Recordable injury rate", "Job satisfaction"],
         "default_units": ["per 100 workers", "GBP/year"],
         "unit_options": [
-            ["per 100 workers", "per 200,000 hrs", "TRIR"],
+            ["per 100 workers", "per 200,000 h", "TRIR"],
             ["GBP/year", "USD/year", "EUR/year", "score (1-10)", "score (1-5)"],
         ],
         "benefit": [False, True],
@@ -344,8 +344,8 @@ CATS = {
         "indicators": ["Tensile strength", "Yield strength", "% elongation"],
         "default_units": ["MPa", "MPa", "%"],
         "unit_options": [
-            ["MPa", "GPa", "ksi", "N/mm2"],
-            ["MPa", "GPa", "ksi", "N/mm2"],
+            ["MPa", "GPa", "ksi", "N/mm²"],
+            ["MPa", "GPa", "ksi", "N/mm²"],
             ["%", "ratio"],
         ],
         "benefit": [True, True, True],
@@ -353,8 +353,8 @@ CATS = {
     "pro": {
         "label": "Productivity", "color": "#993C1D", "bg": "#FAECE7",
         "indicators": ["Total production time", "Material utilisation rate"],
-        "default_units": ["hrs", "%"],
-        "unit_options": [["hrs", "min", "days", "s"], ["%", "ratio", "g/g"]],
+        "default_units": ["h", "%"],
+        "unit_options": [["h", "min", "days", "s"], ["%", "ratio", "g/g"]],
         "benefit": [False, True],
     },
 }
@@ -1101,37 +1101,32 @@ def landing_page():
 
     st.markdown("---")
 
-    c1, c2 = st.columns([3, 2])
-    with c1:
-        st.markdown(
-            "<h3 style='color:#0D2B5E;font-family:Times New Roman,Tinos,Times,serif;"
-            "font-weight:700;'>About PRISM</h3>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
-            "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
-            "PRISM is an integrated multi-criteria decision-making framework "
-            "developed for the comparative sustainability assessment of manufacturing "
-            "processes. It combines indicator-level weighting through the Method Based "
-            "on the Removal Effects of Criteria (MEREC), cross-category weight "
-            "consolidation via the Reciprocal Composite Weighting (RCW) method, and "
-            "a multi-method MCDM aggregation approach producing a final compromise "
-            "ranking through the Performance Stability Index (PSI).</p>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
-            "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
-            "The framework evaluates alternatives across five sustainability dimensions: "
-            "Environmental, Economic, Social, Quality, and Productivity. "
-            "An integrated validation and analytics layer provides robustness "
-            "evidence and stakeholder-oriented sensitivity analysis.</p>",
-            unsafe_allow_html=True,
-        )
-
-    with c2:
-        pass
+    st.markdown(
+        "<h3 style='color:#0D2B5E;font-family:Times New Roman,Tinos,Times,serif;"
+        "font-weight:700;'>About PRISM</h3>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
+        "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
+        "PRISM is an integrated multi-criteria decision-making framework "
+        "developed for the comparative sustainability assessment of manufacturing "
+        "processes. It combines indicator-level weighting through the Method Based "
+        "on the Removal Effects of Criteria (MEREC), cross-category weight "
+        "consolidation via the Reciprocal Composite Weighting (RCW) method, and "
+        "a multi-method MCDM aggregation approach producing a final compromise "
+        "ranking through the Performance Stability Index (PSI).</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
+        "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
+        "The framework evaluates alternatives across five sustainability dimensions: "
+        "Environmental, Economic, Social, Quality, and Productivity. "
+        "An integrated validation and analytics layer provides robustness "
+        "evidence and stakeholder-oriented sensitivity analysis.</p>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown("---")
 
@@ -1727,7 +1722,7 @@ def step11():
         "Outranking": {
             "description": "Compare alternatives pairwise using concordance and discordance.",
             "methods": {
-                "electre": ("ELECTRE-Score", "Figueira, Greco & Roy (2022) — Outranking-based continuous scoring"),
+                "electre": ("ELECTRE-Score", "Outranking-based continuous scoring"),
             },
         },
         "Aggregation": {
