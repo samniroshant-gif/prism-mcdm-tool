@@ -313,7 +313,7 @@ CATS = {
         "unit_options": [
             ["MJ", "GJ", "kWh", "MJ/kg"],
             ["kg CO₂-eq", "t CO₂-eq", "g CO₂-eq"],
-            ["L", "m3", "mL", "kg"],
+            ["L", "m³", "mL", "kg"],
         ],
         "benefit": [False, False, False],
     },
