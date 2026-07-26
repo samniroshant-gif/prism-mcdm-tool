@@ -3,7 +3,7 @@ PRISM — Sustainability MCDM Assessment Tool
 Streamlit implementation
 
 Levels:
-  1. System definition (processes, categories, custom indicators, units, indicator values)
+  1. System definition (alternatives, categories, custom indicators, units, indicator values)
   1.5 Correlation check (within-category Spearman correlation review, informational)
   2. Indicator processing (MEREC normalisation/weights, N2 normalisation, category scores)
   3. Decision aggregation (Equal/Entropy/CRITIC weighting + RCW consolidation,
@@ -284,7 +284,7 @@ CAT_SHORT = {
 }
 
 def proc_short_labels(names):
-    """Generate short labels for processes to avoid x-axis overlap."""
+    """Generate short labels for alternatives to avoid x-axis overlap."""
     shorts = []
     used = set()
     for name in names:
@@ -769,7 +769,7 @@ def compute_category_score_from_raw(ckey, raw_override=None):
 
 
 STEP_LABELS = [
-    "1. Processes", "2. Categories", "3. Custom indicators", "4. Units",
+    "1. Alternatives", "2. Categories", "3. Custom indicators", "4. Units",
     "5. Indicators", "6. Correlation check", "7. MEREC weights",
     "8. Category scores", "9. Level 3 categories", "10. Category weights",
     "11. MCDM methods", "12. Results", "13. Validation (optional)",
@@ -833,8 +833,8 @@ def build_excel_report():
         ("Generated", datetime.now().strftime("%Y-%m-%d %H:%M")),
         ("Tool", "PRISM — Performance Ranking via Integrated Sustainability Metrics"),
         ("Institution", "Cranfield University"),
-        ("Number of processes", n_proc),
-        ("Processes", ", ".join(names)),
+        ("Number of alternatives", n_proc),
+        ("Alternatives", ", ".join(names)),
         ("Categories selected", ", ".join(CATS[c]["label"] for c in l3_cats)),
         ("MCDM methods", ", ".join(METHOD_LABELS[m] for m in (list(ss.sel_mcdm_methods) or ALL_MCDM_KEYS))),
         ("Weighting methods", ", ".join(ss.sel_weight_methods)),
@@ -945,7 +945,7 @@ def build_excel_report():
     if mr:
         ws6 = wb.create_sheet("6. MCDM Results")
         add_title(ws6, "MCDM Rankings and PSI Compromise Rank")
-        headers = ["Process"] + [METHOD_LABELS[m] for m in methods]
+        headers = ["Alternative"] + [METHOD_LABELS[m] for m in methods]
         if len(methods) > 1:
             psi = calc_psi(mr, methods, 0.5)
             psi_ranks = rank_with_ties(psi, ascending=False)
@@ -1111,7 +1111,7 @@ def landing_page():
         "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
         "PRISM is an integrated multi-criteria decision-making framework "
         "developed for the comparative sustainability assessment of manufacturing "
-        "processes. It combines indicator-level weighting through the Method Based "
+        "alternatives. It combines indicator-level weighting through the Method Based "
         "on the Removal Effects of Criteria (MEREC), cross-category weight "
         "consolidation via the Reciprocal Composite Weighting (RCW) method, and "
         "a multi-method MCDM aggregation approach producing a final compromise "
@@ -1140,9 +1140,9 @@ def landing_page():
 
 
 def step1():
-    st.header("Step 1 - Define processes")
+    st.header("Step 1 - Define alternatives")
 
-    n = st.slider("Number of processes", min_value=2, max_value=10,
+    n = st.slider("Number of alternatives", min_value=2, max_value=10,
                    value=st.session_state.n_proc, key="n_proc_slider")
     st.session_state.n_proc = n
 
@@ -1153,12 +1153,12 @@ def step1():
         names = names[:n]
     st.session_state.proc_names = names
 
-    st.subheader("Name each process")
+    st.subheader("Name each alternative")
     cols = st.columns(min(n, 5))
     new_names = []
     for i in range(n):
         with cols[i % len(cols)]:
-            val = st.text_input(f"Process {i+1}", value=names[i], key=f"pname_{i}",
+            val = st.text_input(f"Alternative {i+1}", value=names[i], key=f"pname_{i}",
                                  placeholder="enter name")
             new_names.append(val.strip())
     st.session_state.proc_names = new_names
@@ -1602,7 +1602,7 @@ def step8():
         plt.tight_layout()
         mpl_show(fig)
         # Values in table
-        score_rows = [{"Process": n, "Category score": round(float(s), 4)}
+        score_rows = [{"Alternative": n, "Category score": round(float(s), 4)}
                       for n, s in zip(names, scores)]
         st.dataframe(pd.DataFrame(score_rows), use_container_width=True,
                      hide_index=True)
@@ -1802,7 +1802,7 @@ def step12():
 
     st.subheader("MCDM rankings")
 
-    cols = ["Process"] + [METHOD_LABELS[m] for m in methods]
+    cols = ["Alternative"] + [METHOD_LABELS[m] for m in methods]
     if multi:
         cols.append("PSI Rank (p=0.50)")
         psi_05 = calc_psi(method_ranks, methods, 0.5)
@@ -2260,7 +2260,7 @@ def validation_weight_sensitivity():
     cat_scores = st.session_state.cat_scores
     mat = np.array([cat_scores[c] for c in l3_cats])
 
-    rows = [{"Process": name} for name in names]
+    rows = [{"Alternative": name} for name in names]
     for combo_methods, combo_label in WEIGHT_COMBO_SETS:
         w = get_category_weights(mat, set(combo_methods))
         weighted_mat = mat * w[:, None]
@@ -2273,7 +2273,7 @@ def validation_weight_sensitivity():
     df = pd.DataFrame(rows)
     st.session_state["export_weight_sens"] = df
     st.dataframe(df, use_container_width=True, hide_index=True)
-    rank_cols = [c for c in df.columns if c != "Process"]
+    rank_cols = [c for c in df.columns if c != "Alternative"]
     any_change = any(
         len(set(df.loc[i, rank_cols].tolist())) > 1
         for i in range(len(df))
@@ -2407,7 +2407,7 @@ def validation_bc_sensitivity():
                        key="bc_p_slider")
 
     multi = len(sel_mcdm_methods) > 1
-    cols = ["Process"] + [METHOD_LABELS[m] for m in sel_mcdm_methods]
+    cols = ["Alternative"] + [METHOD_LABELS[m] for m in sel_mcdm_methods]
     if multi and method_ranks:
         cols.append("PSI Rank (p=0.50)")
         base_psi = calc_psi(method_ranks, sel_mcdm_methods, 0.5)
@@ -2442,7 +2442,7 @@ def validation_bc_sensitivity():
     weighted_mat = mat * w[:, None]
     ranks = run_mcdm_suite(weighted_mat, w, sel_mcdm_methods)
 
-    p_cols = ["Process"] + [METHOD_LABELS[m] for m in sel_mcdm_methods]
+    p_cols = ["Alternative"] + [METHOD_LABELS[m] for m in sel_mcdm_methods]
     if multi:
         p_cols.append(f"PSI Rank (p={p_val:.2f})")
         psi_vals = calc_psi(ranks, sel_mcdm_methods, p_val)
@@ -2606,7 +2606,7 @@ def analytics_category_weighted_contribution():
     st.markdown("**Percentage contribution per category**")
     rows = []
     for pi, name in enumerate(names):
-        row = {"Process": name, "Total score": round(float(totals[pi]), 4)}
+        row = {"Alternative": name, "Total score": round(float(totals[pi]), 4)}
         for ci, ckey in enumerate(l3_cats):
             pct = (contribs[ci, pi] / totals[pi] * 100) if totals[pi] > 0 else 0.0
             row[f"{CATS[ckey]['label']} (%)"] = round(pct, 1)
@@ -2931,7 +2931,7 @@ def analytics_indicator_loo():
         st.warning(
             "⚠️ One or more rank changes detected. "
             "Indicators highlighted in red above are critical to the current ranking — "
-            "their removal alters the final process order."
+            "their removal alters the final alternative order."
         )
 
 
@@ -3047,7 +3047,7 @@ def analytics_stakeholder_preference():
         if delta != 0:
             any_change = True
         comp_rows.append({
-            "Process": name,
+            "Alternative": name,
             "Original PSI rank (RCW)": orig_r,
             f"New PSI rank ({stakeholder})": new_r,
             "Rank change": (f"+{delta}" if delta > 0
@@ -3072,7 +3072,7 @@ def analytics_stakeholder_preference():
 
     method_rows = []
     for pi, name in enumerate(names):
-        row = {"Process": name,
+        row = {"Alternative": name,
                f"PSI rank ({stakeholder})": int(psi_ranks_custom[pi]),
                f"PSI score ({stakeholder})": round(float(psi_custom[pi]), 4)}
         for m in sel_mcdm_methods:
@@ -3135,7 +3135,7 @@ def analytics_stakeholder_preference():
     psi_table_rows = []
     for pi, name in enumerate(names):
         psi_table_rows.append({
-            "Process": name,
+            "Alternative": name,
             "Original PSI (RCW)": round(float(base_psi[pi]), 4),
             "Stakeholder PSI": round(float(psi_custom[pi]), 4),
             "Δ PSI": round(float(psi_custom[pi]) - float(base_psi[pi]), 4),
