@@ -331,14 +331,13 @@ CATS = {
     },
     "soc": {
         "label": "Social", "color": "#534AB7", "bg": "#EEEDFE",
-        "indicators": ["Recordable injury rate", "Job satisfaction", "Toxicity potential"],
-        "default_units": ["per 100 workers", "GBP/year", "kg-1,4-DCB"],
+        "indicators": ["Recordable injury rate", "Job satisfaction"],
+        "default_units": ["per 100 workers", "GBP/year"],
         "unit_options": [
             ["per 100 workers", "per 200,000 hrs", "TRIR"],
             ["GBP/year", "USD/year", "EUR/year", "score (1-10)", "score (1-5)"],
-            ["kg-1,4-DCB", "CTUh", "DALYs", "cases/yr"],
         ],
-        "benefit": [False, True, False],
+        "benefit": [False, True],
     },
     "qua": {
         "label": "Quality", "color": "#854F0B", "bg": "#FAEEDA",
@@ -833,7 +832,7 @@ def build_excel_report():
     rows_s = [
         ("Generated", datetime.now().strftime("%Y-%m-%d %H:%M")),
         ("Tool", "PRISM — Performance Ranking via Integrated Sustainability Metrics"),
-        ("Institution", "Cranfield University — WAMC"),
+        ("Institution", "Cranfield University"),
         ("Number of processes", n_proc),
         ("Processes", ", ".join(names)),
         ("Categories selected", ", ".join(CATS[c]["label"] for c in l3_cats)),
@@ -984,129 +983,6 @@ def build_excel_report():
             style_body(ws7, ri, len(headers))
         auto_width(ws7)
 
-    # ── Sheet 8: Validation — Weighting Sensitivity ──────────────────────────
-    if "export_weight_sens" in ss:
-        df_ws = ss["export_weight_sens"]
-        ws8 = wb.create_sheet("8. Weighting Sensitivity")
-        add_title(ws8, "Validation — Weighting Method Sensitivity")
-        for ci, h in enumerate(df_ws.columns, 1):
-            ws8.cell(3, ci, h).font = HDR_FONT
-            ws8.cell(3, ci).fill = HDR_FILL
-            ws8.cell(3, ci).alignment = HDR_ALIGN
-        style_header(ws8, 3, len(df_ws.columns))
-        for ri, row_data in enumerate(df_ws.itertuples(index=False), start=4):
-            for ci, val in enumerate(row_data, 1):
-                ws8.cell(ri, ci, val).font = BODY_FONT
-            style_body(ws8, ri, len(df_ws.columns))
-        auto_width(ws8)
-
-    # ── Sheet 9: Validation — B/C Sensitivity ────────────────────────────────
-    if "export_bc_sens" in ss:
-        df_bc = ss["export_bc_sens"]
-        ws9 = wb.create_sheet("9. BC Sensitivity")
-        add_title(ws9, "Validation — Benefit/Cost Indicator Sensitivity")
-        for ci, h in enumerate(df_bc.columns, 1):
-            ws9.cell(3, ci, h).font = HDR_FONT
-            ws9.cell(3, ci).fill = HDR_FILL
-            ws9.cell(3, ci).alignment = HDR_ALIGN
-        style_header(ws9, 3, len(df_bc.columns))
-        for ri, row_data in enumerate(df_bc.itertuples(index=False), start=4):
-            for ci, val in enumerate(row_data, 1):
-                ws9.cell(ri, ci, val).font = BODY_FONT
-            style_body(ws9, ri, len(df_bc.columns))
-        auto_width(ws9)
-
-    # ── Sheet 10: Validation — Monte Carlo ───────────────────────────────────
-    if "export_mc" in ss:
-        rc = ss["export_mc"]  # dict: method -> (n_proc, n_proc) array
-        ws10 = wb.create_sheet("10. Monte Carlo")
-        add_title(ws10, "Validation — Monte Carlo Uncertainty (10,000 Dirichlet draws)")
-        ws10.cell(3, 1, "Method").font = HDR_FONT
-        ws10.cell(3, 1).fill = HDR_FILL
-        ws10.cell(3, 2, "Process").font = HDR_FONT
-        ws10.cell(3, 2).fill = HDR_FILL
-        for ri in range(1, n_proc + 1):
-            ws10.cell(3, 2 + ri, f"Rank {ri} (%)").font = HDR_FONT
-            ws10.cell(3, 2 + ri).fill = HDR_FILL
-        style_header(ws10, 3, 2 + n_proc)
-        row = 4
-        for m, counts in rc.items():
-            for pi in range(n_proc):
-                ws10.cell(row, 1, METHOD_LABELS.get(m, m)).font = BODY_FONT
-                ws10.cell(row, 2, names[pi]).font = BODY_FONT
-                for ri in range(n_proc):
-                    ws10.cell(row, 3 + ri,
-                              round(float(counts[pi, ri]) * 100, 1)).font = BODY_FONT
-                style_body(ws10, row, 2 + n_proc)
-                row += 1
-        auto_width(ws10)
-
-    # ── Sheet 11: Validation — Rank Reversal ─────────────────────────────────
-    if "export_rank_reversal" in ss:
-        rr = ss["export_rank_reversal"]
-        df_rr = rr["df"]
-        ws11 = wb.create_sheet("11. Rank Reversal")
-        add_title(ws11, f"Validation — Rank-Reversal Test (Excluded: {', '.join(rr['excluded'])})")
-        for ci, h in enumerate(df_rr.columns, 1):
-            ws11.cell(3, ci, h).font = HDR_FONT
-            ws11.cell(3, ci).fill = HDR_FILL
-            ws11.cell(3, ci).alignment = HDR_ALIGN
-        style_header(ws11, 3, len(df_rr.columns))
-        for ri, row_data in enumerate(df_rr.itertuples(index=False), start=4):
-            for ci, val in enumerate(row_data, 1):
-                ws11.cell(ri, ci, val).font = BODY_FONT
-            style_body(ws11, ri, len(df_rr.columns))
-        auto_width(ws11)
-
-    # ── Sheet 12: Validation — Normalisation Sensitivity ─────────────────────
-    if "export_norm_sens" in ss:
-        ns = ss["export_norm_sens"]
-        df_ns = ns["df"]
-        ws12 = wb.create_sheet("12. Norm Sensitivity")
-        add_title(ws12, f"Validation — Normalisation Sensitivity (N2 vs {ns['alt_norm']})")
-        for ci, h in enumerate(df_ns.columns, 1):
-            ws12.cell(3, ci, h).font = HDR_FONT
-            ws12.cell(3, ci).fill = HDR_FILL
-            ws12.cell(3, ci).alignment = HDR_ALIGN
-        style_header(ws12, 3, len(df_ns.columns))
-        for ri, row_data in enumerate(df_ns.itertuples(index=False), start=4):
-            for ci, val in enumerate(row_data, 1):
-                ws12.cell(ri, ci, val).font = BODY_FONT
-            style_body(ws12, ri, len(df_ns.columns))
-        auto_width(ws12)
-
-    # ── Sheet 13: Analytics — Category Contribution ───────────────────────────
-    if "export_cat_contrib" in ss:
-        df_cc = ss["export_cat_contrib"]
-        ws13 = wb.create_sheet("13. Category Contribution")
-        add_title(ws13, "Analytics — Category Weighted Contribution")
-        for ci, h in enumerate(df_cc.columns, 1):
-            ws13.cell(3, ci, h).font = HDR_FONT
-            ws13.cell(3, ci).fill = HDR_FILL
-            ws13.cell(3, ci).alignment = HDR_ALIGN
-        style_header(ws13, 3, len(df_cc.columns))
-        for ri, row_data in enumerate(df_cc.itertuples(index=False), start=4):
-            for ci, val in enumerate(row_data, 1):
-                ws13.cell(ri, ci, val).font = BODY_FONT
-            style_body(ws13, ri, len(df_cc.columns))
-        auto_width(ws13)
-
-    # ── Sheet 14: Analytics — Stakeholder Simulation ──────────────────────────
-    if "export_stakeholder" in ss:
-        df_sh = ss["export_stakeholder"]
-        ws14 = wb.create_sheet("14. Stakeholder Simulation")
-        add_title(ws14, "Analytics — Stakeholder Preference Simulation")
-        for ci, h in enumerate(df_sh.columns, 1):
-            ws14.cell(3, ci, h).font = HDR_FONT
-            ws14.cell(3, ci).fill = HDR_FILL
-            ws14.cell(3, ci).alignment = HDR_ALIGN
-        style_header(ws14, 3, len(df_sh.columns))
-        for ri, row_data in enumerate(df_sh.itertuples(index=False), start=4):
-            for ci, val in enumerate(row_data, 1):
-                ws14.cell(ri, ci, val).font = BODY_FONT
-            style_body(ws14, ri, len(df_sh.columns))
-        auto_width(ws14)
-
     # Finalise
     buf = io.BytesIO()
     wb.save(buf)
@@ -1240,7 +1116,7 @@ def landing_page():
             "processes. It combines indicator-level weighting through the Method Based "
             "on the Removal Effects of Criteria (MEREC), cross-category weight "
             "consolidation via the Reciprocal Composite Weighting (RCW) method, and "
-            "a multi-method MCDM aggregation suite, producing a final compromise "
+            "a multi-method MCDM aggregation approach producing a final compromise "
             "ranking through the Performance Stability Index (PSI).</p>",
             unsafe_allow_html=True,
         )
@@ -1249,34 +1125,13 @@ def landing_page():
             "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
             "The framework evaluates alternatives across five sustainability dimensions: "
             "Environmental, Economic, Social, Quality, and Productivity. "
-            "An integrated validation suite and analytics layer provide robustness "
+            "An integrated validation and analytics layer provides robustness "
             "evidence and stakeholder-oriented sensitivity analysis.</p>",
             unsafe_allow_html=True,
         )
 
     with c2:
-        st.markdown(
-            "<h3 style='color:#0D2B5E;font-family:Times New Roman,Tinos,Times,serif;"
-            "font-weight:700;'>Framework</h3>",
-            unsafe_allow_html=True,
-        )
-        framework_items = [
-            ("System Definition", "Processes, categories, indicators"),
-            ("Indicator Processing", "MEREC weighting, N2 normalisation"),
-            ("Decision Aggregation", "RCW, MCDM suite, PSI ranking"),
-            ("Validation", "5 robustness checks"),
-            ("Analytics", "Contribution, sensitivity, stakeholder"),
-        ]
-        for title, desc in framework_items:
-            st.markdown(
-                f"<div style='background:#F7F9FC;border-left:3px solid #0D2B5E;"
-                f"padding:8px 12px;border-radius:4px;margin:6px 0;'>"
-                f"<span style='font-weight:700;color:#0D2B5E;font-size:13px;"
-                f"font-family:Times New Roman,Tinos,Times,serif;'>{title}</span>"
-                f"<br><span style='font-size:12px;color:#6B7A99;"
-                f"font-family:Times New Roman,Tinos,Times,serif;'>{desc}</span></div>",
-                unsafe_allow_html=True,
-            )
+        pass
 
     st.markdown("---")
 
@@ -1872,7 +1727,7 @@ def step11():
         "Outranking": {
             "description": "Compare alternatives pairwise using concordance and discordance.",
             "methods": {
-                "electre": ("ELECTRE-Score", "Outranking-based continuous scoring"),
+                "electre": ("ELECTRE-Score", "Figueira, Greco & Roy (2022) — Outranking-based continuous scoring"),
             },
         },
         "Aggregation": {
@@ -2842,29 +2697,7 @@ def analytics_leave_one_out():
             row_z.append(delta)
         z_vals.append(row_z)
 
-    apply_mpl_style()
-    z_arr = np.array(z_vals, dtype=float)
-    cat_lbls = [CATS[c]["label"] for c in l3_cats]
-    cmap = LinearSegmentedColormap.from_list("rg", ["#16A34A", "#f8fafc", "#DC2626"])
-    vext = max(abs(z_arr.min()), abs(z_arr.max()), 1)
-    fig, ax = plt.subplots(figsize=(max(4, len(names)*1.2),
-                                     max(2.5, len(l3_cats)*0.7)))
-    im = ax.imshow(z_arr, cmap=cmap, vmin=-vext, vmax=vext, aspect="auto")
-    ax.set_xticks(range(len(names))); ax.set_xticklabels(names, fontsize=9)
-    ax.set_yticks(range(len(cat_lbls))); ax.set_yticklabels(cat_lbls, fontsize=9)
-    for r in range(len(cat_lbls)):
-        for c in range(len(names)):
-            v = int(z_arr[r, c])
-            txt = f"+{v}" if v > 0 else str(v) if v != 0 else "—"
-            ax.text(c, r, txt, ha="center", va="center",
-                    fontsize=10, color="#0D2B5E", fontweight="bold")
-    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
-    cbar.set_label("Rank change", fontsize=9)
-    cbar.ax.tick_params(labelsize=8)
-    ax.set_xlabel("Process", fontsize=9)
-    ax.set_ylabel("Category excluded", fontsize=9)
-    plt.tight_layout()
-    mpl_show(fig)
+
 
     # ── Within-category ranking ───────────────────────────────────────────────
     st.divider()
@@ -3092,31 +2925,7 @@ def analytics_indicator_loo():
                      use_container_width=True, hide_index=True)
 
         # Heatmap per category
-        apply_mpl_style()
-        z_arr_h = np.array(z_vals, dtype=float)
-        cmap_h = LinearSegmentedColormap.from_list("rg", ["#16A34A","#f8fafc","#DC2626"])
-        vext_h = max(abs(z_arr_h.min()), abs(z_arr_h.max()), 1)
-        fig, ax = plt.subplots(figsize=(max(4, len(names)*1.2),
-                                         max(2, n_ind*0.65)))
-        im = ax.imshow(z_arr_h, cmap=cmap_h,
-                       vmin=-vext_h, vmax=vext_h, aspect="auto")
-        ax.set_xticks(range(len(names)))
-        ax.set_xticklabels(names, fontsize=9)
-        ax.set_yticks(range(n_ind))
-        ax.set_yticklabels(ind_labels, fontsize=8)
-        for r in range(n_ind):
-            for c in range(len(names)):
-                v = int(z_arr_h[r, c])
-                txt = f"+{v}" if v > 0 else str(v) if v != 0 else "—"
-                ax.text(c, r, txt, ha="center", va="center",
-                        fontsize=10, color="#0D2B5E", fontweight="bold")
-        cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
-        cbar.set_label("Rank change", fontsize=8)
-        cbar.ax.tick_params(labelsize=7)
-        ax.set_xlabel("Process", fontsize=9)
-        ax.set_ylabel("Indicator excluded", fontsize=9)
-        plt.tight_layout()
-        mpl_show(fig)
+
         st.write("")
 
     # Overall interpretation
