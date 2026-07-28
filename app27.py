@@ -2570,58 +2570,141 @@ def validation_monte_carlo():
 
 
 def analytics_category_weighted_contribution():
-    st.subheader("A. Weighted category contribution")
-    
-    names = st.session_state.proc_names
-    l3_cats = ordered_l3_cats()
+    """
+    PSI-attributed category contribution analysis.
+
+    Formulae (from PRISM methodology):
+      S_c,i  = CategoryScore_c,i × w_c^RCW
+      T_i    = Σ_c S_c,i
+      Pct^PSI_c,i = (S_c,i / T_i) × 100
+      PSI_c,i = PSI_i × (S_c,i / T_i)
+
+    Each row sums to 100% — directly linked to PSI.
+    """
+    st.subheader("A. PSI-attributed category contribution")
+
+    names     = st.session_state.proc_names
+    n_proc    = len(names)
+    l3_cats   = ordered_l3_cats()
     cat_scores = st.session_state.cat_scores
-    final_w = st.session_state.final_cat_weights
+    final_w   = st.session_state.final_cat_weights
+    method_ranks = st.session_state.get("last_method_ranks", {})
+    sel_mcdm  = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+    multi     = len(sel_mcdm) > 1
 
-    cat_labels = [CATS[c]["label"] for c in l3_cats]
-    cat_colors = [CATS[c]["color"] for c in l3_cats]
+    p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
+                       value=0.5, step=0.01, key="cat_contrib_p")
 
-    # Compute contributions: shape (n_cats, n_proc)
-    contribs = np.array([cat_scores[c] * final_w[ci]
-                         for ci, c in enumerate(l3_cats)])
-    totals = contribs.sum(axis=0)  # total weighted score per process
+    # ── Step 1: S_c,i = CategoryScore × w_c^RCW ─────────────────────────────
+    S = np.array([cat_scores[c] * final_w[ci]
+                  for ci, c in enumerate(l3_cats)])  # (n_cats, n_proc)
 
-    # ── Stacked bar chart ────────────────────────────────────────────────────
-    apply_mpl_style()
+    # ── Step 2: T_i = Σ_c S_c,i ─────────────────────────────────────────────
+    T = S.sum(axis=0)  # (n_proc,)
+
+    # ── Step 3: Pct^PSI_c,i = S_c,i / T_i × 100 ─────────────────────────────
+    pct = np.where(T > 0, S / T * 100, 0.0)  # (n_cats, n_proc)
+
+    # ── Step 4: PSI_c,i = PSI_i × (S_c,i / T_i) ─────────────────────────────
+    if multi and method_ranks:
+        psi_scores = calc_psi(method_ranks, sel_mcdm, p_val)
+    else:
+        psi_scores = np.ones(n_proc)  # fallback if only 1 method
+
+    psi_cat = psi_scores[None, :] * (S / np.where(T > 0, T, 1.0))  # (n_cats, n_proc)
+
     shorts = proc_short_labels(names)
-    fig, ax = plt.subplots(figsize=(max(5, len(names)*1.5), 3.8))
-    bottoms_d = np.zeros(len(names))
+
+    # ── Chart A: Stacked 100% bar — Pct^PSI per category ─────────────────────
+    st.markdown(
+        "<p style='font-family:Times New Roman,Tinos,serif;font-size:13px;"
+        "color:#0D2B5E;margin:4px 0;'>"
+        "<b>Pct<sup>PSI</sup><sub>c,i</sub></b> = "
+        "(<i>S<sub>c,i</sub></i> / <i>T<sub>i</sub></i>) × 100 &nbsp;|&nbsp; "
+        "<i>S<sub>c,i</sub></i> = CategoryScore<sub>c,i</sub> × <i>w<sub>c</sub><sup>RCW</sup></i>"
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    apply_mpl_style()
+    fig, ax = plt.subplots(figsize=(max(5, n_proc * 1.5), 3.8))
+    bottoms = np.zeros(n_proc)
     for ci, ckey in enumerate(l3_cats):
-        ax.bar(shorts, contribs[ci], bottom=bottoms_d,
+        ax.bar(shorts, pct[ci], bottom=bottoms,
                color=CATS[ckey]["color"], label=CATS[ckey]["label"],
                edgecolor="white", linewidth=0.5)
-        bottoms_d += contribs[ci]
-    ax.set_ylabel("Weighted category score", fontsize=10)
+        bottoms += pct[ci]
+    ax.set_ylabel("PSI contribution share (%)", fontsize=10)
+    ax.set_ylim(0, 105)
+    ax.axhline(y=100, color="#0D2B5E", linewidth=0.5, linestyle="--", alpha=0.4)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.14),
               ncol=min(len(l3_cats), 3), fontsize=8, frameon=False)
     ax.tick_params(labelsize=9)
     plt.tight_layout()
     mpl_show(fig)
 
-    # ── Percentage breakdown table ────────────────────────────────────────────
-    st.markdown("**Percentage contribution per category**")
-    rows = []
+    # ── Table A: Pct^PSI per category ────────────────────────────────────────
+    st.markdown("**Percentage contribution to PSI per category (each row sums to 100%)**")
+    rows_pct = []
     for pi, name in enumerate(names):
-        row = {"Alternative": name, "Total score": round(float(totals[pi]), 4)}
+        row = {"Process": name, "PSI score": round(float(psi_scores[pi]), 4)}
         for ci, ckey in enumerate(l3_cats):
-            pct = (contribs[ci, pi] / totals[pi] * 100) if totals[pi] > 0 else 0.0
-            row[f"{CATS[ckey]['label']} (%)"] = round(pct, 1)
-        rows.append(row)
-    df_cat_contrib = pd.DataFrame(rows)
-    st.session_state["export_cat_contrib"] = df_cat_contrib
-    st.dataframe(df_cat_contrib, use_container_width=True, hide_index=True)
+            row[f"{CATS[ckey]['label']} (%)"] = round(float(pct[ci, pi]), 1)
+        row["Total (%)"] = 100.0
+        rows_pct.append(row)
+    df_pct = pd.DataFrame(rows_pct)
+    st.session_state["export_cat_contrib"] = df_pct
+    st.dataframe(df_pct, use_container_width=True, hide_index=True)
 
-    # ── Category weight table ─────────────────────────────────────────────────
-    st.markdown("**RCW category weights applied**")
-    w_rows = [{"Category": CATS[l3_cats[ci]]["label"],
-               "RCW weight": round(float(final_w[ci]), 4),
-               "Weight (%)": round(float(final_w[ci]) * 100, 1)}
-              for ci in range(len(l3_cats))]
-    st.dataframe(pd.DataFrame(w_rows), use_container_width=True, hide_index=True)
+    st.divider()
+
+    # ── Chart B: PSI_c,i line/bar — PSI attributed per category ──────────────
+    if multi and method_ranks:
+        st.markdown(
+            "<p style='font-family:Times New Roman,Tinos,serif;font-size:13px;"
+            "color:#0D2B5E;margin:4px 0;'>"
+            "<b>PSI<sub>c,i</sub></b> = PSI<sub>i</sub> × "
+            "(<i>S<sub>c,i</sub></i> / <i>T<sub>i</sub></i>)"
+            "</p>",
+            unsafe_allow_html=True,
+        )
+
+        apply_mpl_style()
+        fig2, ax2 = plt.subplots(figsize=(max(5, n_proc * 1.5), 3.8))
+        bottoms2 = np.zeros(n_proc)
+        for ci, ckey in enumerate(l3_cats):
+            ax2.bar(shorts, psi_cat[ci], bottom=bottoms2,
+                    color=CATS[ckey]["color"], label=CATS[ckey]["label"],
+                    edgecolor="white", linewidth=0.5)
+            bottoms2 += psi_cat[ci]
+        # Overlay full PSI score as a line
+        ax2.plot(shorts, psi_scores, color="#0D2B5E", linewidth=2,
+                 marker="D", markersize=6, label="Full PSI", zorder=5)
+        ax2.set_ylabel("PSI-attributed score", fontsize=10)
+        ax2.legend(loc="upper center", bbox_to_anchor=(0.5, 1.14),
+                   ncol=min(len(l3_cats) + 1, 4), fontsize=8, frameon=False)
+        ax2.tick_params(labelsize=9)
+        plt.tight_layout()
+        mpl_show(fig2)
+
+        # ── Table B: PSI_c,i values ───────────────────────────────────────────
+        st.markdown("**PSI-attributed score per category**")
+        rows_psi = []
+        for pi, name in enumerate(names):
+            row = {"Process": name, "Full PSI": round(float(psi_scores[pi]), 4)}
+            for ci, ckey in enumerate(l3_cats):
+                row[f"PSI — {CATS[ckey]['label']}"] = round(float(psi_cat[ci, pi]), 4)
+            row["Sum (verify)"] = round(float(psi_cat[:, pi].sum()), 4)
+            rows_psi.append(row)
+        st.dataframe(pd.DataFrame(rows_psi), use_container_width=True, hide_index=True)
+
+    # ── RCW weights reference ─────────────────────────────────────────────────
+    with st.expander("RCW category weights"):
+        w_rows = [{"Category": CATS[l3_cats[ci]]["label"],
+                   "RCW weight": round(float(final_w[ci]), 4),
+                   "Weight (%)": round(float(final_w[ci]) * 100, 1)}
+                  for ci in range(len(l3_cats))]
+        st.dataframe(pd.DataFrame(w_rows), use_container_width=True, hide_index=True)
 
 
 def analytics_leave_one_out():
@@ -2752,19 +2835,62 @@ def analytics_category_intro():
 
 
 def analytics_indicator_contribution():
-    st.subheader("A. Indicator contribution share")
-    
-    names = st.session_state.proc_names
-    l3_cats = ordered_l3_cats()
-    n2_data = st.session_state.n2_data
-    merec_w = st.session_state.merec_w
+    """
+    PSI-attributed indicator contribution analysis.
 
-    for ckey in l3_cats:
+    Formulae (from PRISM methodology):
+      u_j,i    = n2_j,i × w_j^MEREC
+      Share_j,i = u_j,i / Σ_j(u_j,i) × 100         [within category, sums to 100%]
+
+      PSI_j,i  = PSI_i × (S_c,i / T_i) × (u_j,i / Σ_j u_j,i)
+      Pct^PSI_j,i = (n2_j,i × w_j^MEREC × w_c^RCW) /
+                    Σ_c Σ_j (n2_j,i × w_j^MEREC × w_c^RCW) × 100
+    """
+    st.subheader("A. PSI-attributed indicator contribution")
+
+    names    = st.session_state.proc_names
+    n_proc   = len(names)
+    l3_cats  = ordered_l3_cats()
+    n2_data  = st.session_state.n2_data
+    merec_w  = st.session_state.merec_w
+    final_w  = st.session_state.final_cat_weights
+    method_ranks = st.session_state.get("last_method_ranks", {})
+    sel_mcdm = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+    multi    = len(sel_mcdm) > 1
+    shorts   = proc_short_labels(names)
+
+    p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
+                       value=0.5, step=0.01, key="ind_contrib_p")
+
+    if multi and method_ranks:
+        psi_scores = calc_psi(method_ranks, sel_mcdm, p_val)
+    else:
+        psi_scores = np.ones(n_proc)
+
+    # ── Pre-compute category-level S_c,i and T_i ─────────────────────────────
+    S_cat = np.array([
+        st.session_state.cat_scores[c] * final_w[ci]
+        for ci, c in enumerate(l3_cats)
+    ])  # (n_cats, n_proc)
+    T = S_cat.sum(axis=0)  # (n_proc,)
+
+    st.markdown(
+        "<p style='font-family:Times New Roman,Tinos,serif;font-size:13px;"
+        "color:#0D2B5E;margin:4px 0;'>"
+        "<b>Share<sub>j,i</sub></b> = "
+        "(<i>n2<sub>j,i</sub></i> × <i>w<sub>j</sub><sup>MEREC</sup></i>) / "
+        "Σ<sub>j</sub>(<i>n2<sub>j,i</sub></i> × <i>w<sub>j</sub><sup>MEREC</sup></i>) × 100 "
+        "&nbsp;— sums to 100% per process per category"
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    for ci, ckey in enumerate(l3_cats):
         cat = CATS[ckey]
         ind_names, ind_units, _ = get_full_indicators(ckey)
         n_ind = len(ind_names)
-        n2 = n2_data[ckey]        # shape (n_ind, n_proc)
-        w_ind = merec_w[ckey]     # shape (n_ind,)
+        n2    = n2_data[ckey]      # (n_ind, n_proc)
+        w_ind = merec_w[ckey]      # (n_ind,)
 
         st.markdown(
             f"<span style='background:{cat['bg']};color:{cat['color']};"
@@ -2773,47 +2899,84 @@ def analytics_indicator_contribution():
             f"{cat['label']}</span>", unsafe_allow_html=True,
         )
 
-        # Weighted scores per indicator per process
-        weighted = n2 * w_ind[:, None]          # (n_ind, n_proc)
-        cat_totals = weighted.sum(axis=0)        # (n_proc,)
-        shares = np.where(
-            cat_totals > 0,
-            weighted / cat_totals * 100,
-            0.0
-        )                                        # (n_ind, n_proc)
+        # u_j,i = n2_j,i × w_j^MEREC
+        u = n2 * w_ind[:, None]               # (n_ind, n_proc)
+        cat_total = u.sum(axis=0)             # (n_proc,) = CategoryScore_c,i
 
-        # Table
-        rows = []
-        for j in range(n_ind):
-            row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})"}
-            for pi, name in enumerate(names):
-                row[f"{name} (%)"] = round(float(shares[j, pi]), 1)
-            rows.append(row)
-        st.dataframe(pd.DataFrame(rows),
-                     use_container_width=True, hide_index=True)
+        # Share_j,i = u_j,i / Σ_j(u_j,i) × 100
+        shares = np.where(cat_total > 0,
+                          u / cat_total * 100,
+                          0.0)                # (n_ind, n_proc)
 
-        # Grouped bar chart — one group per indicator
+        # PSI_j,i = PSI_i × (S_c,i / T_i) × (u_j,i / cat_total)
+        cat_psi_frac = np.where(T > 0,
+                                S_cat[ci] / T,
+                                0.0)          # (n_proc,)
+        psi_ind = (psi_scores[None, :] *
+                   cat_psi_frac[None, :] *
+                   np.where(cat_total > 0, u / cat_total, 0.0))  # (n_ind, n_proc)
+
+        # ── Chart: 100% stacked bar per process ───────────────────────────────
         apply_mpl_style()
-        shorts = proc_short_labels(names)
-        ind_labels_c = [f"{ind_names[j]} ({ind_units[j]})" for j in range(n_ind)]
-        x = np.arange(len(names))
-        w_bar = 0.7 / n_ind
-        fig, ax = plt.subplots(figsize=(max(5, len(names)*1.5), 2.8))
+        alphas = np.linspace(0.45, 1.0, n_ind)
+        fig, ax = plt.subplots(figsize=(max(5, n_proc * 1.5), 3.0))
+        bottoms = np.zeros(n_proc)
         for j in range(n_ind):
-            offsets = x + (j - n_ind/2 + 0.5) * w_bar
-            vals = [float(shares[j, pi]) for pi in range(len(names))]
-            ax.bar(offsets, vals, width=w_bar*0.85,
-                   color=CATS[ckey]["color"],
-                   alpha=0.5 + 0.5*(j/max(n_ind-1,1)),
-                   label=ind_names[j], edgecolor="white")
-        ax.set_xticks(x)
-        ax.set_xticklabels(shorts, fontsize=9)
-        ax.set_ylabel("Contribution share (%)", fontsize=10)
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.14),
+            ax.bar(shorts, shares[j], bottom=bottoms,
+                   color=cat["color"], alpha=float(alphas[j]),
+                   label=ind_names[j], edgecolor="white", linewidth=0.4)
+            bottoms += shares[j]
+        ax.set_ylabel("Indicator share within category (%)", fontsize=10)
+        ax.set_ylim(0, 105)
+        ax.axhline(y=100, color="#0D2B5E", linewidth=0.5,
+                   linestyle="--", alpha=0.4)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.16),
                   ncol=min(n_ind, 3), fontsize=8, frameon=False)
         ax.tick_params(labelsize=9)
         plt.tight_layout()
         mpl_show(fig)
+
+        # ── Table: Share % ────────────────────────────────────────────────────
+        rows_s = []
+        for j in range(n_ind):
+            row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})",
+                   "MEREC weight": round(float(w_ind[j]), 4)}
+            for pi, name in enumerate(names):
+                row[f"{name} (%)"] = round(float(shares[j, pi]), 1)
+            rows_s.append(row)
+        # Total row
+        total_row = {"Indicator": "Total", "MEREC weight": ""}
+        for pi, name in enumerate(names):
+            total_row[f"{name} (%)"] = round(float(shares[:, pi].sum()), 1)
+        rows_s.append(total_row)
+        st.dataframe(pd.DataFrame(rows_s),
+                     use_container_width=True, hide_index=True)
+
+        # ── PSI_j,i table ─────────────────────────────────────────────────────
+        if multi and method_ranks:
+            with st.expander(f"PSI-attributed scores — {cat['label']}"):
+                st.markdown(
+                    "<p style='font-family:Times New Roman,Tinos,serif;"
+                    "font-size:12px;color:#0D2B5E;'>"
+                    "<b>PSI<sub>j,i</sub></b> = PSI<sub>i</sub> × "
+                    "(<i>S<sub>c,i</sub></i>/<i>T<sub>i</sub></i>) × "
+                    "(<i>u<sub>j,i</sub></i>/Σ<i>u<sub>j,i</sub></i>)"
+                    "</p>",
+                    unsafe_allow_html=True,
+                )
+                rows_p = []
+                for j in range(n_ind):
+                    row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})"}
+                    for pi, name in enumerate(names):
+                        row[name] = round(float(psi_ind[j, pi]), 4)
+                    rows_p.append(row)
+                sum_row = {"Indicator": "Sum (= PSI_c,i)"}
+                for pi, name in enumerate(names):
+                    sum_row[name] = round(float(psi_ind[:, pi].sum()), 4)
+                rows_p.append(sum_row)
+                st.dataframe(pd.DataFrame(rows_p),
+                             use_container_width=True, hide_index=True)
+
         st.write("")
 
 
