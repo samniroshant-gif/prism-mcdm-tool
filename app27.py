@@ -2916,27 +2916,33 @@ def analytics_indicator_contribution():
                    cat_psi_frac[None, :] *
                    np.where(cat_total > 0, u / cat_total, 0.0))  # (n_ind, n_proc)
 
-        # ── Chart: 100% stacked bar per process ───────────────────────────────
+        # ── Chart: 100% stacked bar per process (contribution to full PSI) ────
+        # Pct^PSI_j,i = (n2_j,i × w_j^MEREC × w_c^RCW) /
+        #               Σ_c Σ_j (n2_j,i × w_j^MEREC × w_c^RCW) × 100
+        # This is computed across ALL categories and stored in psi_pct_all
+        # For this category's chart we show its indicators' share of full PSI
+        psi_pct_this = np.where(T > 0,
+                                u * final_w[ci] / T * 100,
+                                0.0)  # (n_ind, n_proc)
+
         apply_mpl_style()
         alphas = np.linspace(0.45, 1.0, n_ind)
         fig, ax = plt.subplots(figsize=(max(5, n_proc * 1.5), 3.0))
         bottoms = np.zeros(n_proc)
         for j in range(n_ind):
-            ax.bar(shorts, shares[j], bottom=bottoms,
+            ax.bar(shorts, psi_pct_this[j], bottom=bottoms,
                    color=cat["color"], alpha=float(alphas[j]),
                    label=ind_names[j], edgecolor="white", linewidth=0.4)
-            bottoms += shares[j]
-        ax.set_ylabel("Indicator share within category (%)", fontsize=10)
-        ax.set_ylim(0, 105)
-        ax.axhline(y=100, color="#0D2B5E", linewidth=0.5,
-                   linestyle="--", alpha=0.4)
+            bottoms += psi_pct_this[j]
+        ax.set_ylabel("Contribution to full PSI (%)", fontsize=10)
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.16),
                   ncol=min(n_ind, 3), fontsize=8, frameon=False)
         ax.tick_params(labelsize=9)
         plt.tight_layout()
         mpl_show(fig)
 
-        # ── Table: Share % ────────────────────────────────────────────────────
+        # ── Table A: Share within category (sums to 100% per category) ─────────
+        st.markdown("**Within-category share** (sums to 100% per process per category)")
         rows_s = []
         for j in range(n_ind):
             row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})",
@@ -2944,12 +2950,30 @@ def analytics_indicator_contribution():
             for pi, name in enumerate(names):
                 row[f"{name} (%)"] = round(float(shares[j, pi]), 1)
             rows_s.append(row)
-        # Total row
         total_row = {"Indicator": "Total", "MEREC weight": ""}
         for pi, name in enumerate(names):
-            total_row[f"{name} (%)"] = round(float(shares[:, pi].sum()), 1)
+            total_row[f"{name} (%)"] = 100.0
         rows_s.append(total_row)
         st.dataframe(pd.DataFrame(rows_s),
+                     use_container_width=True, hide_index=True)
+
+        # ── Table B: Contribution to full PSI ────────────────────────────────
+        st.markdown(
+            "**Contribution to full PSI** "
+            f"(Pct<sup>PSI</sup><sub>j,i</sub> = n2 × w<sup>MEREC</sup> × w<sup>RCW</sup> / T × 100)",
+            unsafe_allow_html=True,
+        )
+        rows_fp = []
+        for j in range(n_ind):
+            row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})"}
+            for pi, name in enumerate(names):
+                row[f"{name} (%)"] = round(float(psi_pct_this[j, pi]), 1)
+            rows_fp.append(row)
+        cat_total_row = {"Indicator": f"Total — {cat['label']}"}
+        for pi, name in enumerate(names):
+            cat_total_row[f"{name} (%)"] = round(float(psi_pct_this[:, pi].sum()), 1)
+        rows_fp.append(cat_total_row)
+        st.dataframe(pd.DataFrame(rows_fp),
                      use_container_width=True, hide_index=True)
 
         # ── PSI_j,i table ─────────────────────────────────────────────────────
