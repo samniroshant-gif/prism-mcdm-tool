@@ -3233,53 +3233,79 @@ def analytics_combined_contribution():
                     fontsize=8.5, fontweight="bold",
                     fontfamily="Times New Roman", color="white")
 
-        # ── Leader lines + labels for ALL outer indicators ────────────────────
-        label_radius = 1.48  # where label anchor sits
-        line_start   = 1.20  # just outside outer ring edge
-        line_end     = 1.36  # end of leader line
+        # ── Leader lines + collision-aware outer labels ───────────────────────
+        # Tiny slices clutter the chart; keep values in the tables below.
+        MIN_LABEL_PCT = 1.5
+        line_start = 1.20
+        radii_alt = (1.42, 1.65)
+        min_dy = 0.11
 
+        candidates = []
         for j, (wedge, sz) in enumerate(zip(wedges_outer, outer_sizes)):
+            pct = float(ind_psi_pct[j, pi])
+            if pct < MIN_LABEL_PCT:
+                continue
             ang_deg = (wedge.theta1 + wedge.theta2) / 2
-            ang_rad = np.deg2rad(ang_deg)
-            cos_a   = np.cos(ang_rad)
-            sin_a   = np.sin(ang_rad)
+            candidates.append((ang_deg, j, pct))
 
-            # Leader line: start at outer edge → elbow → label
+        candidates.sort(key=lambda t: t[0])
+
+        # Place left and right sides independently with vertical deconflict.
+        placed = {"left": [], "right": []}  # list of dicts
+        for k, (ang_deg, j, pct) in enumerate(candidates):
+            ang_rad = np.deg2rad(ang_deg)
+            cos_a = np.cos(ang_rad)
+            sin_a = np.sin(ang_rad)
+            side = "right" if cos_a >= 0 else "left"
+            ha = "left" if side == "right" else "right"
+            r_lbl = radii_alt[k % 2]
+            xl = r_lbl * cos_a
+            yl = r_lbl * sin_a
             x0 = line_start * cos_a
             y0 = line_start * sin_a
-            x1 = line_end   * cos_a
-            y1 = line_end   * sin_a
+            short_nm = short_name(ind_labels[j])
+            lbl_txt = f"{short_nm}  {pct:.1f}%"
+            placed[side].append({
+                "yl": yl, "xl": xl, "ha": ha, "txt": lbl_txt,
+                "x0": x0, "y0": y0,
+            })
 
+        for side in ("left", "right"):
+            items = sorted(placed[side], key=lambda d: d["yl"])
+            for i in range(1, len(items)):
+                if items[i]["yl"] - items[i - 1]["yl"] < min_dy:
+                    items[i]["yl"] = items[i - 1]["yl"] + min_dy
+            placed[side] = items
+
+        for d in placed["left"] + placed["right"]:
+            xl, yl = d["xl"], d["yl"]
+            x1, y1 = 0.92 * xl, 0.92 * yl
             ax.annotate(
                 "",
-                xy=(x1, y1), xytext=(x0, y0),
+                xy=(x1, y1), xytext=(d["x0"], d["y0"]),
                 arrowprops=dict(arrowstyle="-", color="#888888",
                                 lw=0.7, shrinkA=0, shrinkB=0),
             )
-
-            # Label position — push further out left/right based on angle
-            ha = "left" if cos_a >= 0 else "right"
-            xl = label_radius * cos_a
-            yl = label_radius * sin_a
-
-            short_nm = short_name(ind_labels[j])
-            lbl_txt  = f"{short_nm}  {float(ind_psi_pct[j,pi]):.1f}%"
-
-            ax.text(xl, yl, lbl_txt,
-                    ha=ha, va="center",
-                    fontsize=12.0,
+            ax.plot([x1, xl], [y1, yl], color="#888888", lw=0.7)
+            ax.text(xl, yl, d["txt"],
+                    ha=d["ha"], va="center",
+                    fontsize=10.0,
                     fontfamily="Times New Roman",
                     color="#111111",
                     bbox=dict(boxstyle="round,pad=0.18",
-                              fc="white", ec="none", alpha=0.85))
+                              fc="white", ec="none", alpha=0.9))
 
-        ax.set_xlim(-1.72, 1.72)
-        ax.set_ylim(-1.72, 1.72)
+        ax.set_xlim(-1.95, 1.95)
+        ax.set_ylim(-1.95, 1.95)
         ax.set_title(
             f"{name}",
             fontsize=13, fontweight="bold",
             fontfamily="Times New Roman", color="#0D2B5E", pad=10,
         )
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
         plt.tight_layout()
         mpl_show(fig)
 
