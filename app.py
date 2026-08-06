@@ -1405,13 +1405,62 @@ def step5():
                       for pi in range(len(names))] for j in range(len(ind_names))]
             st.session_state[seed_key] = pd.DataFrame(seed, index=rows, columns=names)
 
-        edited = st.data_editor(st.session_state[seed_key], key=editor_key, use_container_width=True)
+        # column_config disables sort arrows on process name columns
+        col_cfg = {name: st.column_config.NumberColumn(name, help=None)
+                   for name in names}
+        edited = st.data_editor(
+            st.session_state[seed_key],
+            key=editor_key,
+            use_container_width=True,
+            column_config=col_cfg,
+        )
 
         for j in range(len(ind_names)):
             for pi in range(len(names)):
                 st.session_state.indicator_values[(ckey, j, pi)] = float(edited.iloc[j, pi])
 
         st.write("")
+
+    # ── Save / Load Draft ────────────────────────────────────────────────────
+    st.divider()
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        if st.button("💾 Save draft", key="save_draft_btn",
+                     help="Saves all entered values in memory. Restores them if you navigate away."):
+            draft = {}
+            for ckey in ordered_sel_cats():
+                editor_key = f"editor_{ckey}"
+                seed_key   = f"editor_seed_{ckey}"
+                # Prefer live editor state, fall back to seed
+                if editor_key in st.session_state:
+                    df = st.session_state[editor_key]
+                elif seed_key in st.session_state:
+                    df = st.session_state[seed_key]
+                else:
+                    continue
+                draft[ckey] = df.values.tolist()
+            st.session_state["_step5_draft"] = draft
+            st.success("Draft saved — values preserved across navigation.")
+    with dc2:
+        has_draft = "_step5_draft" in st.session_state
+        if st.button("📂 Load draft", key="load_draft_btn",
+                     disabled=not has_draft,
+                     help="Restore previously saved values."):
+            draft = st.session_state["_step5_draft"]
+            for ckey, values in draft.items():
+                ind_names, ind_units, _ = get_full_indicators(ckey)
+                rows = [f"{ind_names[j]} ({ind_units[j]})"
+                        for j in range(len(ind_names))]
+                df = pd.DataFrame(values, index=rows,
+                                  columns=st.session_state.proc_names)
+                st.session_state[f"editor_seed_{ckey}"] = df
+                for j in range(len(ind_names)):
+                    for pi in range(len(st.session_state.proc_names)):
+                        st.session_state.indicator_values[(ckey, j, pi)] = float(values[j][pi])
+            st.success("Draft loaded.")
+            st.rerun()
+        if not has_draft:
+            st.caption("No draft saved yet.")
 
     st.divider()
     c1, c2 = st.columns(2)
@@ -1431,7 +1480,7 @@ def step5():
 
 
 def step6():
-    st.header("Step 6 - Within-category correlation check")
+    st.header("Step 6 - Within-category correlation analysis")
 
     names = st.session_state.proc_names
     n_proc = len(names)
@@ -2212,6 +2261,287 @@ def validation_normalisation_sensitivity():
     
 
 
+def validation_bootstrap_merec_rcw():
+    st.subheader("6. Bootstrap stability analysis — MEREC and RCW")
+
+    names    = st.session_state.proc_names
+    l3_cats  = ordered_l3_cats()
+    final_w  = st.session_state.final_cat_weights
+    sel_wm   = st.session_state.sel_weight_methods
+
+    c1, c2 = st.columns(2)
+    with c1:
+        unc_pct = st.slider(
+            "Indicator value uncertainty (±%)",
+            min_value=1, max_value=50, value=10, step=1,
+            key="bs_unc_pct",
+            help="Each indicator value is sampled uniformly within ±this% of its observed value.",
+        )
+    with c2:
+        n_iter = st.slider(
+            "Number of bootstrap iterations",
+            min_value=100, max_value=2000, value=500, step=100,
+            key="bs_n_iter",
+        )
+
+    if not st.button("Run bootstrap", type="primary", key="bs_run"):
+        st.info("Set parameters above and click Run bootstrap.")
+        return
+
+    rng = np.random.default_rng(42)
+    progress = st.progress(0, text="Running bootstrap...")
+
+    # Storage
+    # MEREC: per category → list of weight arrays (n_iter, n_ind)
+    merec_boot = {ckey: [] for ckey in l3_cats}
+    # RCW: list of weight arrays (n_iter, n_cats)
+    rcw_boot = []
+
+    for b in range(n_iter):
+        # ── Perturb indicator values ──────────────────────────────────────────
+        cat_scores_b = {}
+        merec_w_b = {}
+
+        for ckey in l3_cats:
+            raw, benefits = get_raw_matrix(ckey)
+            n_ind, n_proc = raw.shape
+            # Sample each indicator value within ±unc_pct%
+            noise = rng.uniform(
+                1 - unc_pct/100,
+                1 + unc_pct/100,
+                size=raw.shape
+            )
+            raw_b = np.maximum(raw * noise, 1e-9)
+
+            # Recompute MEREC and N2
+            nm_b = np.zeros_like(raw_b)
+            n2_b = np.zeros_like(raw_b)
+            for j in range(n_ind):
+                nm_b[j] = merec_norm(raw_b[j], benefits[j])
+                n2_b[j] = n2_norm(raw_b[j], benefits[j])
+
+            w_ind_b = merec_weights(nm_b)
+            merec_w_b[ckey] = w_ind_b
+            merec_boot[ckey].append(w_ind_b.copy())
+
+            cat_scores_b[ckey] = (n2_b * w_ind_b[:, None]).sum(axis=0)
+
+        # ── Recompute RCW ─────────────────────────────────────────────────────
+        mat_b = np.array([cat_scores_b[c] for c in l3_cats])
+        w_rcw_b = get_category_weights(mat_b, sel_wm)
+        rcw_boot.append(w_rcw_b.copy())
+
+        if (b + 1) % 50 == 0:
+            progress.progress((b+1)/n_iter,
+                               text=f"Bootstrap iteration {b+1}/{n_iter}...")
+
+    progress.empty()
+
+    # ── MEREC results ─────────────────────────────────────────────────────────
+    st.markdown("### MEREC Weight Stability")
+    st.markdown(
+        f"<p style='font-family:Times New Roman,Tinos,serif;font-size:12px;"
+        f"color:#555;'>±{unc_pct}% indicator uncertainty | "
+        f"{n_iter} iterations | 95% CI shown</p>",
+        unsafe_allow_html=True,
+    )
+
+    for ckey in l3_cats:
+        cat = CATS[ckey]
+        ind_names, ind_units, _ = get_full_indicators(ckey)
+        boot_arr = np.array(merec_boot[ckey])  # (n_iter, n_ind)
+        observed = st.session_state.merec_w[ckey]
+
+        st.markdown(
+            f"<span style='background:{cat['bg']};color:{cat['color']};"
+            f"padding:2px 10px;border-radius:12px;font-size:13px;"
+            f"font-weight:600;font-family:Times New Roman,Tinos,serif;'>"
+            f"{cat['label']}</span>",
+            unsafe_allow_html=True,
+        )
+
+        rows_m = []
+        all_stable = True
+        for j, (iname, iunit) in enumerate(zip(ind_names, ind_units)):
+            obs  = float(observed[j])
+            lo   = float(np.percentile(boot_arr[:, j], 2.5))
+            hi   = float(np.percentile(boot_arr[:, j], 97.5))
+            mean = float(boot_arr[:, j].mean())
+            cv   = float(boot_arr[:, j].std(ddof=0) / mean * 100) if mean > 0 else 0.0
+            # Stable if observed rank matches bootstrap mean rank
+            obs_rank   = int(np.argsort(-observed)[j] + 1) if len(observed) > 1 else 1
+            stable = lo <= obs <= hi
+            if not stable:
+                all_stable = False
+            rows_m.append({
+                "Indicator": f"{iname} ({iunit})",
+                "Observed weight": round(obs, 4),
+                "Bootstrap mean": round(mean, 4),
+                "95% CI lower": round(lo, 4),
+                "95% CI upper": round(hi, 4),
+                "CV (%)": round(cv, 1),
+                "Stable?": "✅ Yes" if stable else "⚠️ No",
+            })
+
+        st.dataframe(pd.DataFrame(rows_m), use_container_width=True,
+                     hide_index=True)
+
+        # Matplotlib CI chart
+        apply_mpl_style()
+        n_ind = len(ind_names)
+        short_names = [f"{ind_names[j][:12]}" for j in range(n_ind)]
+        obs_vals = [float(observed[j]) for j in range(n_ind)]
+        lo_vals  = [float(np.percentile(boot_arr[:, j], 2.5)) for j in range(n_ind)]
+        hi_vals  = [float(np.percentile(boot_arr[:, j], 97.5)) for j in range(n_ind)]
+        means    = [float(boot_arr[:, j].mean()) for j in range(n_ind)]
+
+        fig, ax = plt.subplots(figsize=(max(5, n_ind * 1.2), 2.8))
+        x = np.arange(n_ind)
+        # CI bars
+        ax.bar(x, [h - l for h, l in zip(hi_vals, lo_vals)],
+               bottom=lo_vals, color=cat["color"], alpha=0.3,
+               width=0.5, label="95% CI", edgecolor="none")
+        # Observed
+        ax.scatter(x, obs_vals, color=cat["color"], zorder=5,
+                   s=60, label="Observed", marker="D")
+        # Bootstrap mean
+        ax.scatter(x, means, color="#0D2B5E", zorder=4,
+                   s=30, label="Bootstrap mean", marker="o")
+        ax.set_xticks(x)
+        ax.set_xticklabels(short_names, rotation=20, ha="right", fontsize=8)
+        ax.set_ylabel("MEREC weight", fontsize=9)
+        ax.legend(fontsize=8, frameon=False,
+                  loc="upper center", bbox_to_anchor=(0.5, 1.18), ncol=3)
+        ax.tick_params(labelsize=8)
+        plt.tight_layout()
+        mpl_show(fig)
+
+        if all_stable:
+            st.markdown(
+                f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;'
+                f'padding:8px 12px;border-radius:4px;margin:4px 0;'
+                f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#1B5E20;">'
+                f'✅ All MEREC weights for {cat["label"]} are stable within ±{unc_pct}% '
+                f'indicator uncertainty — observed weights lie within the 95% CI.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="background:#FFF8E1;border-left:3px solid #D97706;'
+                f'padding:8px 12px;border-radius:4px;margin:4px 0;'
+                f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#7B5800;">'
+                f'⚠️ Some MEREC weights for {cat["label"]} fall outside the 95% CI '
+                f'under ±{unc_pct}% uncertainty — consider reviewing indicator data quality.</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── RCW results ───────────────────────────────────────────────────────────
+    st.markdown("### RCW Weight Stability")
+
+    rcw_arr = np.array(rcw_boot)  # (n_iter, n_cats)
+    cat_labels = [CATS[c]["label"] for c in l3_cats]
+
+    rows_r = []
+    all_stable_rcw = True
+    for ci, ckey in enumerate(l3_cats):
+        obs  = float(final_w[ci])
+        lo   = float(np.percentile(rcw_arr[:, ci], 2.5))
+        hi   = float(np.percentile(rcw_arr[:, ci], 97.5))
+        mean = float(rcw_arr[:, ci].mean())
+        cv   = float(rcw_arr[:, ci].std(ddof=0) / mean * 100) if mean > 0 else 0.0
+        stable = lo <= obs <= hi
+        if not stable:
+            all_stable_rcw = False
+        rows_r.append({
+            "Category": CATS[ckey]["label"],
+            "Observed RCW weight": round(obs, 4),
+            "Bootstrap mean": round(mean, 4),
+            "95% CI lower": round(lo, 4),
+            "95% CI upper": round(hi, 4),
+            "CV (%)": round(cv, 1),
+            "Stable?": "✅ Yes" if stable else "⚠️ No",
+        })
+
+    st.dataframe(pd.DataFrame(rows_r), use_container_width=True,
+                 hide_index=True)
+
+    # RCW CI chart
+    apply_mpl_style()
+    n_cats = len(l3_cats)
+    obs_r  = [float(final_w[ci]) for ci in range(n_cats)]
+    lo_r   = [float(np.percentile(rcw_arr[:, ci], 2.5)) for ci in range(n_cats)]
+    hi_r   = [float(np.percentile(rcw_arr[:, ci], 97.5)) for ci in range(n_cats)]
+    mn_r   = [float(rcw_arr[:, ci].mean()) for ci in range(n_cats)]
+    colors = [CATS[c]["color"] for c in l3_cats]
+
+    fig, ax = plt.subplots(figsize=(max(5, n_cats * 1.4), 3.2))
+    x = np.arange(n_cats)
+    for ci in range(n_cats):
+        ax.bar(ci, hi_r[ci] - lo_r[ci], bottom=lo_r[ci],
+               color=colors[ci], alpha=0.3, width=0.5, edgecolor="none")
+        ax.scatter(ci, obs_r[ci], color=colors[ci], zorder=5,
+                   s=70, marker="D")
+        ax.scatter(ci, mn_r[ci], color="#0D2B5E", zorder=4,
+                   s=35, marker="o")
+    ax.set_xticks(x)
+    ax.set_xticklabels([CATS[c]["label"][:6] for c in l3_cats],
+                       rotation=20, ha="right", fontsize=9)
+    ax.set_ylabel("RCW weight", fontsize=10)
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0],[0], marker="D", color="grey", markersize=7,
+               linestyle="none", label="Observed"),
+        Line2D([0],[0], marker="o", color="#0D2B5E", markersize=5,
+               linestyle="none", label="Bootstrap mean"),
+        plt.Rectangle((0,0),1,1, facecolor="grey", alpha=0.3, label="95% CI"),
+    ]
+    ax.legend(handles=legend_elements, fontsize=8, frameon=False,
+              loc="upper center", bbox_to_anchor=(0.5, 1.14), ncol=3)
+    ax.tick_params(labelsize=9)
+    plt.tight_layout()
+    mpl_show(fig)
+
+    # Weight order stability
+    st.markdown("**Weight ordering stability**")
+    obs_order   = [cat_labels[i] for i in np.argsort(-np.array(obs_r))]
+    order_stable = 0
+    for b in range(n_iter):
+        boot_order = [cat_labels[i]
+                      for i in np.argsort(-rcw_arr[b])]
+        if boot_order == obs_order:
+            order_stable += 1
+    pct_stable = order_stable / n_iter * 100
+
+    if all_stable_rcw:
+        st.markdown(
+            f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;'
+            f'padding:8px 12px;border-radius:4px;margin:4px 0;'
+            f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#1B5E20;">'
+            f'✅ All RCW weights are stable within ±{unc_pct}% indicator uncertainty. '
+            f'The observed weight ordering ({" > ".join(obs_order)}) is preserved in '
+            f'{pct_stable:.1f}% of bootstrap iterations.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="background:#FFF8E1;border-left:3px solid #D97706;'
+            f'padding:8px 12px;border-radius:4px;margin:4px 0;'
+            f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#7B5800;">'
+            f'⚠️ Some RCW weights fall outside the 95% CI. '
+            f'The observed weight ordering is preserved in '
+            f'{pct_stable:.1f}% of bootstrap iterations.</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Store for export
+    st.session_state["export_bootstrap"] = {
+        "unc_pct": unc_pct, "n_iter": n_iter,
+        "merec_boot": merec_boot, "rcw_boot": rcw_arr,
+        "pct_stable": pct_stable,
+    }
+
+
+
 def validation_intro():
     st.header("Step 13 - Validation (optional)")
 
@@ -2224,6 +2554,7 @@ def validation_intro():
             "3. Monte Carlo uncertainty (Dirichlet)",
             "4. Rank-reversal test",
             "5. Normalisation sensitivity",
+            "6. Bootstrap stability (MEREC and RCW)",
         ],
         index=0, key="validation_radio",
     )
@@ -2239,6 +2570,8 @@ def validation_intro():
         validation_rank_reversal()
     elif choice.startswith("5."):
         validation_normalisation_sensitivity()
+    elif choice.startswith("6."):
+        validation_bootstrap_merec_rcw()
 
     st.divider()
     c1, c2 = st.columns(2)
@@ -2431,10 +2764,13 @@ def validation_bc_sensitivity():
         n_ind_bc, n_p_bc = raw.shape
         for j in range(n_ind_bc):
             pct = ben_pct if benefits[j] else cost_pct
-            half = abs(pct) * 0.5 if pct != 0 else 2.5
-            noise = rng_bc.uniform(-half, half, size=n_p_bc)
-            factors = 1 + (pct + noise) / 100.0
-            raw_pert[j] = np.maximum(raw[j] * factors, 1e-9)
+            if pct == 0:
+                raw_pert[j] = raw[j].copy()  # no perturbation at 0%
+            else:
+                half = abs(pct) * 0.5  # ±50% of the stated % as random spread
+                noise = rng_bc.uniform(-half, half, size=n_p_bc)
+                factors = 1 + (pct + noise) / 100.0
+                raw_pert[j] = np.maximum(raw[j] * factors, 1e-9)
         cat_scores_pert[ckey] = compute_category_score_from_raw(ckey, raw_pert)
 
     mat = np.array([cat_scores_pert[c] for c in l3_cats])
@@ -2456,12 +2792,72 @@ def validation_bc_sensitivity():
         p_rows.append(row)
 
     st.markdown(
-        f"**Perturbed results** - Benefit indicators: **{ben_pct:+d}%**, "
+        f"**Perturbed results** — Benefit indicators: **{ben_pct:+d}%**, "
         f"Cost indicators: **{cost_pct:+d}%**, p = **{p_val:.2f}**"
     )
     df_bc_export = pd.DataFrame(p_rows, columns=p_cols)
     st.session_state["export_bc_sens"] = df_bc_export
     st.dataframe(df_bc_export, use_container_width=True, hide_index=True)
+
+    # ── Rank change summary ───────────────────────────────────────────────────
+    base_df  = pd.DataFrame(base_rows, columns=cols)
+    pert_df  = df_bc_export
+    any_rank_change = False
+    for m in sel_mcdm_methods:
+        ml = METHOD_LABELS[m]
+        if ml in base_df.columns and ml in pert_df.columns:
+            if not (base_df[ml].values == pert_df[ml].values).all():
+                any_rank_change = True
+                break
+    if multi and method_ranks:
+        psi_col_base = "PSI Rank (p=0.50)"
+        psi_col_pert = f"PSI Rank (p={p_val:.2f})"
+        if psi_col_base in base_df.columns and psi_col_pert in pert_df.columns:
+            if not (base_df[psi_col_base].values == pert_df[psi_col_pert].values).all():
+                any_rank_change = True
+
+    if not any_rank_change:
+        st.markdown(
+            f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;'
+            f'padding:8px 12px;border-radius:4px;margin:6px 0;'
+            f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#1B5E20;">'
+            f'✅ No rank changes detected under {ben_pct:+d}% benefit / '
+            f'{cost_pct:+d}% cost perturbation. '
+            f'The ranking is robust to this level of indicator uncertainty. '
+            f'This is expected when absolute performance differences between '
+            f'alternatives are large relative to the perturbation magnitude.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="background:#FFF8E1;border-left:3px solid #D97706;'
+            f'padding:8px 12px;border-radius:4px;margin:6px 0;'
+            f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#7B5800;">'
+            f'⚠️ Rank changes detected under {ben_pct:+d}% benefit / '
+            f'{cost_pct:+d}% cost perturbation. '
+            f'Review which alternatives are sensitive.</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Category score changes ────────────────────────────────────────────────
+    st.markdown("**Category score changes under perturbation**")
+    st.caption("Even when ranks are unchanged, the magnitude of category scores shifts — "
+               "showing the perturbation was applied and the analysis is working correctly.")
+    base_scores = st.session_state.cat_scores
+    score_rows = []
+    for pi, name in enumerate(names):
+        row = {"Process": name}
+        for ckey in l3_cats:
+            orig = float(base_scores[ckey][pi])
+            pert = float(cat_scores_pert[ckey][pi])
+            delta = pert - orig
+            pct_chg = (delta / orig * 100) if orig > 1e-10 else 0.0
+            row[f"{CATS[ckey]['label']} (orig)"]   = round(orig, 4)
+            row[f"{CATS[ckey]['label']} (pert)"]   = round(pert, 4)
+            row[f"{CATS[ckey]['label']} (Δ%)"]     = f"{pct_chg:+.1f}%"
+        score_rows.append(row)
+    st.dataframe(pd.DataFrame(score_rows), use_container_width=True,
+                 hide_index=True)
 
 
 def validation_monte_carlo():
@@ -2571,7 +2967,7 @@ def validation_monte_carlo():
 
 def analytics_category_weighted_contribution():
     """
-    PSI-attributed category contribution analysis.
+    Category contribution to weighted MCDM input analysis.
 
     Formulae (from PRISM methodology):
       S_c,i  = CategoryScore_c,i × w_c^RCW
@@ -2581,7 +2977,7 @@ def analytics_category_weighted_contribution():
 
     Each row sums to 100% — directly linked to PSI.
     """
-    st.subheader("A. PSI-attributed category contribution")
+    st.subheader("A. Category contribution to weighted MCDM input")
 
     names     = st.session_state.proc_names
     n_proc    = len(names)
@@ -2605,13 +3001,11 @@ def analytics_category_weighted_contribution():
     # ── Step 3: Pct^PSI_c,i = S_c,i / T_i × 100 ─────────────────────────────
     pct = np.where(T > 0, S / T * 100, 0.0)  # (n_cats, n_proc)
 
-    # ── Step 4: PSI_c,i = PSI_i × (S_c,i / T_i) ─────────────────────────────
+    # ── Step 4: PSI scores for reference ─────────────────────────────────────
     if multi and method_ranks:
         psi_scores = calc_psi(method_ranks, sel_mcdm, p_val)
     else:
-        psi_scores = np.ones(n_proc)  # fallback if only 1 method
-
-    psi_cat = psi_scores[None, :] * (S / np.where(T > 0, T, 1.0))  # (n_cats, n_proc)
+        psi_scores = np.ones(n_proc)
 
     shorts = proc_short_labels(names)
 
@@ -2619,7 +3013,7 @@ def analytics_category_weighted_contribution():
     st.markdown(
         "<p style='font-family:Times New Roman,Tinos,serif;font-size:13px;"
         "color:#0D2B5E;margin:4px 0;'>"
-        "<b>Pct<sup>PSI</sup><sub>c,i</sub></b> = "
+        "<b>Pct<sub>c,i</sub></b> = "
         "(<i>S<sub>c,i</sub></i> / <i>T<sub>i</sub></i>) × 100 &nbsp;|&nbsp; "
         "<i>S<sub>c,i</sub></i> = CategoryScore<sub>c,i</sub> × <i>w<sub>c</sub><sup>RCW</sup></i>"
         "</p>",
@@ -2634,7 +3028,7 @@ def analytics_category_weighted_contribution():
                color=CATS[ckey]["color"], label=CATS[ckey]["label"],
                edgecolor="white", linewidth=0.5)
         bottoms += pct[ci]
-    ax.set_ylabel("PSI contribution share (%)", fontsize=10)
+    ax.set_ylabel("% contribution to weighted MCDM input", fontsize=10)
     ax.set_ylim(0, 105)
     ax.axhline(y=100, color="#0D2B5E", linewidth=0.5, linestyle="--", alpha=0.4)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.14),
@@ -2644,10 +3038,10 @@ def analytics_category_weighted_contribution():
     mpl_show(fig)
 
     # ── Table A: Pct^PSI per category ────────────────────────────────────────
-    st.markdown("**Percentage contribution to PSI per category (each row sums to 100%)**")
+    st.markdown("**% contribution of each category to the weighted MCDM input $T_i$ (each row sums to 100%)**")
     rows_pct = []
     for pi, name in enumerate(names):
-        row = {"Process": name, "PSI score": round(float(psi_scores[pi]), 4)}
+        row = {"Process": name, "PSI rank": int(rank_with_ties(psi_scores, ascending=False)[pi]), "PSI score (ref)": round(float(psi_scores[pi]), 4)}
         for ci, ckey in enumerate(l3_cats):
             row[f"{CATS[ckey]['label']} (%)"] = round(float(pct[ci, pi]), 1)
         row["Total (%)"] = 100.0
@@ -2656,47 +3050,7 @@ def analytics_category_weighted_contribution():
     st.session_state["export_cat_contrib"] = df_pct
     st.dataframe(df_pct, use_container_width=True, hide_index=True)
 
-    st.divider()
 
-    # ── Chart B: PSI_c,i line/bar — PSI attributed per category ──────────────
-    if multi and method_ranks:
-        st.markdown(
-            "<p style='font-family:Times New Roman,Tinos,serif;font-size:13px;"
-            "color:#0D2B5E;margin:4px 0;'>"
-            "<b>PSI<sub>c,i</sub></b> = PSI<sub>i</sub> × "
-            "(<i>S<sub>c,i</sub></i> / <i>T<sub>i</sub></i>)"
-            "</p>",
-            unsafe_allow_html=True,
-        )
-
-        apply_mpl_style()
-        fig2, ax2 = plt.subplots(figsize=(max(5, n_proc * 1.5), 3.8))
-        bottoms2 = np.zeros(n_proc)
-        for ci, ckey in enumerate(l3_cats):
-            ax2.bar(shorts, psi_cat[ci], bottom=bottoms2,
-                    color=CATS[ckey]["color"], label=CATS[ckey]["label"],
-                    edgecolor="white", linewidth=0.5)
-            bottoms2 += psi_cat[ci]
-        # Overlay full PSI score as a line
-        ax2.plot(shorts, psi_scores, color="#0D2B5E", linewidth=2,
-                 marker="D", markersize=6, label="Full PSI", zorder=5)
-        ax2.set_ylabel("PSI-attributed score", fontsize=10)
-        ax2.legend(loc="upper center", bbox_to_anchor=(0.5, 1.14),
-                   ncol=min(len(l3_cats) + 1, 4), fontsize=8, frameon=False)
-        ax2.tick_params(labelsize=9)
-        plt.tight_layout()
-        mpl_show(fig2)
-
-        # ── Table B: PSI_c,i values ───────────────────────────────────────────
-        st.markdown("**PSI-attributed score per category**")
-        rows_psi = []
-        for pi, name in enumerate(names):
-            row = {"Process": name, "Full PSI": round(float(psi_scores[pi]), 4)}
-            for ci, ckey in enumerate(l3_cats):
-                row[f"PSI — {CATS[ckey]['label']}"] = round(float(psi_cat[ci, pi]), 4)
-            row["Sum (verify)"] = round(float(psi_cat[:, pi].sum()), 4)
-            rows_psi.append(row)
-        st.dataframe(pd.DataFrame(rows_psi), use_container_width=True, hide_index=True)
 
     # ── RCW weights reference ─────────────────────────────────────────────────
     with st.expander("RCW category weights"):
@@ -2705,6 +3059,288 @@ def analytics_category_weighted_contribution():
                    "Weight (%)": round(float(final_w[ci]) * 100, 1)}
                   for ci in range(len(l3_cats))]
         st.dataframe(pd.DataFrame(w_rows), use_container_width=True, hide_index=True)
+
+
+def analytics_combined_contribution():
+    """
+    Combined contribution analysis — nested donut per process.
+
+    Inner ring: categories sized by Pct_c,i = S_c,i / T_i × 100
+                % label shown inside each slice
+    Outer ring: indicators sized by Pct^PSI_j,i = n2×w^MEREC×w^RCW / T × 100
+                leader lines to labels outside the ring for ALL indicators
+    Centre:     short process name + PSI score
+    """
+    st.subheader("1. Contribution analysis")
+
+    names    = st.session_state.proc_names
+    n_proc   = len(names)
+    l3_cats  = ordered_l3_cats()
+    n2_data  = st.session_state.n2_data
+    merec_w  = st.session_state.merec_w
+    final_w  = st.session_state.final_cat_weights
+    method_ranks = st.session_state.get("last_method_ranks", {})
+    sel_mcdm = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+    multi    = len(sel_mcdm) > 1
+
+    p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
+                       value=0.5, step=0.01, key="combined_contrib_p")
+
+    if multi and method_ranks:
+        psi_scores = calc_psi(method_ranks, sel_mcdm, p_val)
+    else:
+        psi_scores = np.ones(n_proc)
+
+    # ── Pre-compute S_c,i and T_i ─────────────────────────────────────────────
+    S_cat = np.array([
+        st.session_state.cat_scores[c] * final_w[ci]
+        for ci, c in enumerate(l3_cats)
+    ])
+    T = S_cat.sum(axis=0)
+    cat_pct = np.where(T > 0, S_cat / T * 100, 0.0)
+
+    # ── Build flat indicator lists ─────────────────────────────────────────────
+    ind_labels  = []
+    ind_units_l = []
+    ind_cat_key = []
+    ind_psi_pct = []   # (n_ind_total, n_proc)
+
+    for ci, ckey in enumerate(l3_cats):
+        ind_names, ind_units, _ = get_full_indicators(ckey)
+        n_ind = len(ind_names)
+        n2    = n2_data[ckey]
+        w_ind = merec_w[ckey]
+        u     = n2 * w_ind[:, None]
+        psi_pct = np.where(T > 0, u * final_w[ci] / T * 100, 0.0)
+        for j in range(n_ind):
+            ind_labels.append(ind_names[j])
+            ind_units_l.append(ind_units[j])
+            ind_cat_key.append(ckey)
+            ind_psi_pct.append(psi_pct[j])
+
+    ind_psi_pct = np.array(ind_psi_pct)  # (n_total, n_proc)
+    n_total = len(ind_labels)
+    n_cats  = len(l3_cats)
+
+    shorts_c = proc_short_labels(names)
+
+    # ── Short name map for chart labels ───────────────────────────────────────
+    _SHORT = {
+        # Environmental
+        "cumulative energy demand": "CED",
+        "co2 emissions":            "CO₂",
+        "co₂ emissions":            "CO₂",
+        "water consumption":        "Water",
+        # Economic
+        "material cost":            "Mat. cost",
+        "machine cost":             "Mach. cost",
+        "labour cost":              "Labour",
+        "consumables cost":         "Consumab.",
+        "energy cost":              "Energy",
+        # Social
+        "recordable injury rate":   "Injury",
+        "job satisfaction":         "Wage",
+        "average operator wage":    "Wage",
+        # Quality
+        "tensile strength":         "Tensile",
+        "yield strength":           "Yield",
+        "elongation":               "Elongation",
+        "surface roughness":        "Roughness",
+        "hardness":                 "Hardness",
+        # Productivity
+        "production time":          "Prod. time",
+        "material utilisation":     "Mat. util.",
+        "material utilization":     "Mat. util.",
+        "build rate":               "Build rate",
+        "deposition rate":          "Dep. rate",
+    }
+
+    def short_name(full):
+        return _SHORT.get(full.lower().strip(), full[:10])
+
+    # ── Pre-build outer colours ────────────────────────────────────────────────
+    cat_counts = {}
+    for ck in ind_cat_key:
+        cat_counts[ck] = cat_counts.get(ck, 0) + 1
+    cat_idx = {}
+    outer_colors_base = []
+    for j in range(n_total):
+        ck    = ind_cat_key[j]
+        idx   = cat_idx.get(ck, 0)
+        count = cat_counts[ck]
+        alpha = 0.42 + 0.58 * (idx / max(count - 1, 1))
+        hex_c = CATS[ck]["color"].lstrip("#")
+        r,g,b = (int(hex_c[i:i+2],16)/255 for i in (0,2,4))
+        outer_colors_base.append((r, g, b, alpha))
+        cat_idx[ck] = idx + 1
+
+    from matplotlib.patches import Patch
+    import matplotlib.patheffects as pe
+
+    for pi, name in enumerate(names):
+        apply_mpl_style()
+        # Large figure with extra right margin for legend
+        fig, ax = plt.subplots(figsize=(10.0, 9.5))
+        ax.set_aspect("equal")
+
+        inner_sizes  = [float(cat_pct[ci, pi]) for ci in range(n_cats)]
+        inner_colors = [CATS[ckey]["color"] for ckey in l3_cats]
+        outer_sizes  = [max(float(ind_psi_pct[j, pi]), 0.001)
+                        for j in range(n_total)]
+
+        # ── Inner ring — categories ──────────────────────────────────────────
+        wedges_inner, _ = ax.pie(
+            inner_sizes,
+            radius=0.62,
+            colors=inner_colors,
+            startangle=90,
+            wedgeprops=dict(width=0.30, edgecolor="white", linewidth=2.0),
+            labels=None,
+            counterclock=False,
+        )
+
+        # ── Outer ring — indicators ──────────────────────────────────────────
+        wedges_outer, _ = ax.pie(
+            outer_sizes,
+            radius=1.18,
+            colors=outer_colors_base,
+            startangle=90,
+            wedgeprops=dict(width=0.52, edgecolor="white", linewidth=1.0),
+            labels=None,
+            counterclock=False,
+        )
+
+        # ── Centre — short process name + PSI ─────────────────────────────────
+        ax.text(0, 0.09, shorts_c[pi],
+                ha="center", va="center", fontsize=16, fontweight="bold",
+                fontfamily="Times New Roman", color="#0D2B5E")
+        if multi and method_ranks:
+            ax.text(0, -0.12, "PSI  " + f"{psi_scores[pi]:.4f}",
+                    ha="center", va="center", fontsize=8.5,
+                    fontfamily="Times New Roman", color="#444444")
+
+        # ── Category % labels inside inner ring ───────────────────────────────
+        for ci, (wedge, sz) in enumerate(zip(wedges_inner, inner_sizes)):
+            if sz < 3:
+                continue
+            ang = (wedge.theta1 + wedge.theta2) / 2
+            # Note: pie uses counterclockwise by default but we set counterclock=False
+            r_lbl = 0.47
+            x = r_lbl * np.cos(np.deg2rad(ang))
+            y = r_lbl * np.sin(np.deg2rad(ang))
+            lbl = CATS[l3_cats[ci]]['label'][:3] + '\n' + f'{sz:.1f}%'
+            ax.text(x, y, lbl, ha="center", va="center",
+                    fontsize=8.5, fontweight="bold",
+                    fontfamily="Times New Roman", color="white")
+
+        # ── Leader lines + labels for ALL outer indicators ────────────────────
+        label_radius = 1.48  # where label anchor sits
+        line_start   = 1.20  # just outside outer ring edge
+        line_end     = 1.36  # end of leader line
+
+        for j, (wedge, sz) in enumerate(zip(wedges_outer, outer_sizes)):
+            ang_deg = (wedge.theta1 + wedge.theta2) / 2
+            ang_rad = np.deg2rad(ang_deg)
+            cos_a   = np.cos(ang_rad)
+            sin_a   = np.sin(ang_rad)
+
+            # Leader line: start at outer edge → elbow → label
+            x0 = line_start * cos_a
+            y0 = line_start * sin_a
+            x1 = line_end   * cos_a
+            y1 = line_end   * sin_a
+
+            ax.annotate(
+                "",
+                xy=(x1, y1), xytext=(x0, y0),
+                arrowprops=dict(arrowstyle="-", color="#888888",
+                                lw=0.7, shrinkA=0, shrinkB=0),
+            )
+
+            # Label position — push further out left/right based on angle
+            ha = "left" if cos_a >= 0 else "right"
+            xl = label_radius * cos_a
+            yl = label_radius * sin_a
+
+            short_nm = short_name(ind_labels[j])
+            lbl_txt  = f"{short_nm}  {float(ind_psi_pct[j,pi]):.1f}%"
+
+            ax.text(xl, yl, lbl_txt,
+                    ha=ha, va="center",
+                    fontsize=12.0,
+                    fontfamily="Times New Roman",
+                    color="#111111",
+                    bbox=dict(boxstyle="round,pad=0.18",
+                              fc="white", ec="none", alpha=0.85))
+
+        ax.set_xlim(-1.72, 1.72)
+        ax.set_ylim(-1.72, 1.72)
+        ax.set_title(
+            f"{name}",
+            fontsize=13, fontweight="bold",
+            fontfamily="Times New Roman", color="#0D2B5E", pad=10,
+        )
+        plt.tight_layout()
+        mpl_show(fig)
+
+    # ── Summary tables in expander ────────────────────────────────────────────
+    with st.expander("Detailed contribution tables"):
+        # Category table
+        st.markdown("**Category contribution to weighted MCDM input**")
+        rows_cat = []
+        for pi, pname in enumerate(names):
+            row = {"Process": pname,
+                   "PSI rank": int(rank_with_ties(psi_scores,
+                                                   ascending=False)[pi])}
+            for ci, ckey in enumerate(l3_cats):
+                row[f"{CATS[ckey]['label']} (%)"] = round(
+                    float(cat_pct[ci, pi]), 1)
+            row["Total (%)"] = 100.0
+            rows_cat.append(row)
+        st.dataframe(pd.DataFrame(rows_cat),
+                     use_container_width=True, hide_index=True)
+        st.divider()
+
+        # Indicator table per category
+        for ci, ckey in enumerate(l3_cats):
+            cat = CATS[ckey]
+            ind_names, ind_units, _ = get_full_indicators(ckey)
+            n_ind = len(ind_names)
+            n2    = n2_data[ckey]
+            w_ind = merec_w[ckey]
+            u     = n2 * w_ind[:, None]
+            cat_total = u.sum(axis=0)
+            shares = np.where(cat_total > 0, u / cat_total * 100, 0.0)
+            psi_pct_this = np.where(T > 0,
+                                    u * final_w[ci] / T * 100, 0.0)
+
+            st.markdown(
+                f"<span style='background:{cat['bg']};color:{cat['color']};"
+                f"padding:2px 10px;border-radius:12px;font-size:13px;"
+                f"font-weight:600;font-family:Times New Roman,Tinos,serif;'>"
+                f"{cat['label']}</span>", unsafe_allow_html=True,
+            )
+            rows_ind = []
+            for j in range(n_ind):
+                row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})",
+                       "MEREC weight": round(float(w_ind[j]), 4)}
+                for pi, pname in enumerate(names):
+                    row[f"{pname} within-cat (%)"] = round(
+                        float(shares[j, pi]), 1)
+                for pi, pname in enumerate(names):
+                    row[f"{pname} full (%)"] = round(
+                        float(psi_pct_this[j, pi]), 1)
+                rows_ind.append(row)
+            tot_row = {"Indicator": "Total", "MEREC weight": ""}
+            for pi, pname in enumerate(names):
+                tot_row[f"{pname} within-cat (%)"] = 100.0
+                tot_row[f"{pname} full (%)"] = round(
+                    float(psi_pct_this[:, pi].sum()), 1)
+            rows_ind.append(tot_row)
+            st.dataframe(pd.DataFrame(rows_ind),
+                         use_container_width=True, hide_index=True)
+            st.write("")
+
 
 
 def analytics_leave_one_out():
@@ -2815,38 +3451,21 @@ def analytics_leave_one_out():
 
 
 def analytics_category_intro():
-    st.subheader("1. Category-wise contribution analysis")
-
-    sub = st.radio(
-        "Select analysis",
-        [
-            "None - skip",
-            "A. Weighted category contribution",
-            "B. Leave-one-out category analysis",
-        ],
-        index=0, key="cat_analysis_radio",
-    )
-
-    if sub.startswith("A."):
-        analytics_category_weighted_contribution()
-    elif sub.startswith("B."):
-        analytics_leave_one_out()
+    pass  # replaced by analytics_combined_contribution
 
 
 
 def analytics_indicator_contribution():
     """
-    PSI-attributed indicator contribution analysis.
+    Indicator contribution — nested donut (sunburst) chart per process.
 
-    Formulae (from PRISM methodology):
-      u_j,i    = n2_j,i × w_j^MEREC
-      Share_j,i = u_j,i / Σ_j(u_j,i) × 100         [within category, sums to 100%]
+    Outer ring: indicators sized by Pct^PSI_j,i = n2 × w^MEREC × w^RCW / T × 100
+    Inner ring: categories sized by Pct_c,i = S_c,i / T_i × 100
+    Centre text: process name
 
-      PSI_j,i  = PSI_i × (S_c,i / T_i) × (u_j,i / Σ_j u_j,i)
-      Pct^PSI_j,i = (n2_j,i × w_j^MEREC × w_c^RCW) /
-                    Σ_c Σ_j (n2_j,i × w_j^MEREC × w_c^RCW) × 100
+    Also shows summary tables below the charts.
     """
-    st.subheader("A. PSI-attributed indicator contribution")
+    st.subheader("A. Indicator contribution to weighted MCDM input")
 
     names    = st.session_state.proc_names
     n_proc   = len(names)
@@ -2857,7 +3476,6 @@ def analytics_indicator_contribution():
     method_ranks = st.session_state.get("last_method_ranks", {})
     sel_mcdm = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
     multi    = len(sel_mcdm) > 1
-    shorts   = proc_short_labels(names)
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
                        value=0.5, step=0.01, key="ind_contrib_p")
@@ -2867,141 +3485,212 @@ def analytics_indicator_contribution():
     else:
         psi_scores = np.ones(n_proc)
 
-    # ── Pre-compute category-level S_c,i and T_i ─────────────────────────────
+    # ── Pre-compute S_c,i and T_i ─────────────────────────────────────────────
     S_cat = np.array([
         st.session_state.cat_scores[c] * final_w[ci]
         for ci, c in enumerate(l3_cats)
     ])  # (n_cats, n_proc)
     T = S_cat.sum(axis=0)  # (n_proc,)
 
-    st.markdown(
-        "<p style='font-family:Times New Roman,Tinos,serif;font-size:13px;"
-        "color:#0D2B5E;margin:4px 0;'>"
-        "<b>Share<sub>j,i</sub></b> = "
-        "(<i>n2<sub>j,i</sub></i> × <i>w<sub>j</sub><sup>MEREC</sup></i>) / "
-        "Σ<sub>j</sub>(<i>n2<sub>j,i</sub></i> × <i>w<sub>j</sub><sup>MEREC</sup></i>) × 100 "
-        "&nbsp;— sums to 100% per process per category"
-        "</p>",
-        unsafe_allow_html=True,
-    )
+    # ── Build flat indicator lists for outer ring ─────────────────────────────
+    # For each indicator: category key, label, full-PSI pct per process
+    ind_labels  = []   # display label
+    ind_units_l = []
+    ind_cat_key = []   # which category it belongs to
+    ind_psi_pct = []   # (n_ind_total, n_proc) — outer ring sizes
+    ind_within  = []   # (n_ind_total, n_proc) — within-category share
+    ind_merec_w = []
 
     for ci, ckey in enumerate(l3_cats):
-        cat = CATS[ckey]
         ind_names, ind_units, _ = get_full_indicators(ckey)
         n_ind = len(ind_names)
-        n2    = n2_data[ckey]      # (n_ind, n_proc)
-        w_ind = merec_w[ckey]      # (n_ind,)
+        n2    = n2_data[ckey]
+        w_ind = merec_w[ckey]
+        u = n2 * w_ind[:, None]
+        cat_total = u.sum(axis=0)
+        shares = np.where(cat_total > 0, u / cat_total * 100, 0.0)
+        psi_pct = np.where(T > 0, u * final_w[ci] / T * 100, 0.0)
 
-        st.markdown(
-            f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,Tinos,Times,serif;'>"
-            f"{cat['label']}</span>", unsafe_allow_html=True,
-        )
+        for j in range(n_ind):
+            ind_labels.append(ind_names[j])
+            ind_units_l.append(ind_units[j])
+            ind_cat_key.append(ckey)
+            ind_psi_pct.append(psi_pct[j])
+            ind_within.append(shares[j])
+            ind_merec_w.append(float(w_ind[j]))
 
-        # u_j,i = n2_j,i × w_j^MEREC
-        u = n2 * w_ind[:, None]               # (n_ind, n_proc)
-        cat_total = u.sum(axis=0)             # (n_proc,) = CategoryScore_c,i
+    ind_psi_pct = np.array(ind_psi_pct)   # (n_ind_total, n_proc)
+    ind_within  = np.array(ind_within)
 
-        # Share_j,i = u_j,i / Σ_j(u_j,i) × 100
-        shares = np.where(cat_total > 0,
-                          u / cat_total * 100,
-                          0.0)                # (n_ind, n_proc)
+    # Category pct for inner ring
+    cat_pct = np.where(T > 0, S_cat / T * 100, 0.0)  # (n_cats, n_proc)
 
-        # PSI_j,i = PSI_i × (S_c,i / T_i) × (u_j,i / cat_total)
-        cat_psi_frac = np.where(T > 0,
-                                S_cat[ci] / T,
-                                0.0)          # (n_proc,)
-        psi_ind = (psi_scores[None, :] *
-                   cat_psi_frac[None, :] *
-                   np.where(cat_total > 0, u / cat_total, 0.0))  # (n_ind, n_proc)
+    # ── Draw one nested donut per process ─────────────────────────────────────
+    n_cats  = len(l3_cats)
+    n_total = len(ind_labels)
+    from matplotlib.patches import Patch
 
-        # ── Chart: 100% stacked bar per process (contribution to full PSI) ────
-        # Pct^PSI_j,i = (n2_j,i × w_j^MEREC × w_c^RCW) /
-        #               Σ_c Σ_j (n2_j,i × w_j^MEREC × w_c^RCW) × 100
-        # This is computed across ALL categories and stored in psi_pct_all
-        # For this category's chart we show its indicators' share of full PSI
-        psi_pct_this = np.where(T > 0,
-                                u * final_w[ci] / T * 100,
-                                0.0)  # (n_ind, n_proc)
+    # Short process labels for centre
+    shorts_c = proc_short_labels(names)
+
+    # Pre-build outer colours (category colour + alpha shading per indicator)
+    cat_alpha_counts = {}
+    for j in range(n_total):
+        ck = ind_cat_key[j]
+        cat_alpha_counts[ck] = cat_alpha_counts.get(ck, 0) + 1
+
+    def make_outer_colors():
+        cat_alpha_idx = {}
+        cols = []
+        for j in range(n_total):
+            ck = ind_cat_key[j]
+            idx   = cat_alpha_idx.get(ck, 0)
+            count = cat_alpha_counts[ck]
+            alpha = 0.42 + 0.58 * (idx / max(count - 1, 1))
+            hex_c = CATS[ck]["color"].lstrip("#")
+            r,g,b = (int(hex_c[i:i+2],16)/255 for i in (0,2,4))
+            cols.append((r, g, b, alpha))
+            cat_alpha_idx[ck] = idx + 1
+        return cols
+
+    outer_colors_base = make_outer_colors()
+
+    # One large figure per process — stacked vertically for readability
+    for pi, name in enumerate(names):
 
         apply_mpl_style()
-        alphas = np.linspace(0.45, 1.0, n_ind)
-        fig, ax = plt.subplots(figsize=(max(5, n_proc * 1.5), 3.0))
-        bottoms = np.zeros(n_proc)
-        for j in range(n_ind):
-            ax.bar(shorts, psi_pct_this[j], bottom=bottoms,
-                   color=cat["color"], alpha=float(alphas[j]),
-                   label=ind_names[j], edgecolor="white", linewidth=0.4)
-            bottoms += psi_pct_this[j]
-        ax.set_ylabel("Contribution to full PSI (%)", fontsize=10)
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.16),
-                  ncol=min(n_ind, 3), fontsize=8, frameon=False)
-        ax.tick_params(labelsize=9)
+        # Large square figure — one per process
+        fig, ax = plt.subplots(figsize=(7.5, 7.5))
+
+        inner_sizes  = [float(cat_pct[ci, pi]) for ci in range(n_cats)]
+        inner_colors = [CATS[ckey]["color"] for ckey in l3_cats]
+        inner_labels = [CATS[ckey]["label"] for ckey in l3_cats]
+        outer_sizes  = [max(float(ind_psi_pct[j, pi]), 0.001)
+                        for j in range(n_total)]
+
+        # ── Inner ring — categories ──────────────────────────────────────────
+        wedges_inner, _ = ax.pie(
+            inner_sizes,
+            radius=0.52,
+            colors=inner_colors,
+            startangle=90,
+            wedgeprops=dict(width=0.26, edgecolor="white", linewidth=1.5),
+            labels=None,
+        )
+
+        # ── Outer ring — indicators ──────────────────────────────────────────
+        wedges_outer, _ = ax.pie(
+            outer_sizes,
+            radius=1.0,
+            colors=outer_colors_base,
+            startangle=90,
+            wedgeprops=dict(width=0.44, edgecolor="white", linewidth=1.0),
+            labels=None,
+        )
+
+        # ── Centre text — short process name + PSI ────────────────────────────
+        ax.text(0, 0.07, shorts_c[pi],
+                ha="center", va="center", fontsize=13, fontweight="bold",
+                fontfamily="Times New Roman", color="#0D2B5E")
+        if multi and method_ranks:
+            ax.text(0, -0.13, f"PSI = {psi_scores[pi]:.4f}",
+                    ha="center", va="center", fontsize=9,
+                    fontfamily="Times New Roman", color="#444444")
+
+        # ── Category labels on inner ring ─────────────────────────────────────
+        for ci, (wedge, lbl, sz) in enumerate(
+                zip(wedges_inner, inner_labels, inner_sizes)):
+            if sz < 4:
+                continue
+            ang = (wedge.theta1 + wedge.theta2) / 2
+            x = 0.39 * np.cos(np.deg2rad(ang))
+            y = 0.39 * np.sin(np.deg2rad(ang))
+            ax.text(x, y, lbl[:3], ha="center", va="center",
+                    fontsize=7.5, fontweight="bold",
+                    fontfamily="Times New Roman", color="white")
+
+        # ── Data labels on outer ring — indicator short name + % ─────────────
+        for j, (wedge, sz) in enumerate(zip(wedges_outer, outer_sizes)):
+            if sz < 2.5:  # skip tiny slices — too crowded
+                continue
+            ang  = (wedge.theta1 + wedge.theta2) / 2
+            # Label at 1.13 radius (just outside the outer ring)
+            xl = 1.14 * np.cos(np.deg2rad(ang))
+            yl = 1.14 * np.sin(np.deg2rad(ang))
+            short_name = ind_labels[j][:10]  # truncate long names
+            label_txt  = f"{short_name}\n{sz:.1f}%"
+            ax.text(xl, yl, label_txt,
+                    ha="center", va="center",
+                    fontsize=6.2, fontfamily="Times New Roman",
+                    color="#222222",
+                    bbox=dict(boxstyle="round,pad=0.15", fc="white",
+                              ec="none", alpha=0.7))
+
+        # ── Indicator legend — right side ─────────────────────────────────────
+        legend_patches = []
+        for j in range(n_total):
+            lbl = f"{ind_labels[j]} ({ind_units_l[j]})  {float(ind_psi_pct[j,pi]):.1f}%"
+            legend_patches.append(
+                Patch(facecolor=outer_colors_base[j], label=lbl)
+            )
+        ax.legend(
+            handles=legend_patches,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            fontsize=7.5,
+            frameon=True,
+            framealpha=0.9,
+            edgecolor="#cccccc",
+            title="Indicators",
+            title_fontsize=8,
+            prop={"family": "Times New Roman", "size": 7.5},
+        )
+
+        ax.set_title(
+            f"{name}",
+            fontsize=12, fontweight="bold",
+            fontfamily="Times New Roman", color="#0D2B5E", pad=10,
+        )
+        ax.set_aspect("equal")
         plt.tight_layout()
         mpl_show(fig)
 
-        # ── Table A: Share within category (sums to 100% per category) ─────────
-        st.markdown("**Within-category share** (sums to 100% per process per category)")
-        rows_s = []
-        for j in range(n_ind):
-            row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})",
-                   "MEREC weight": round(float(w_ind[j]), 4)}
-            for pi, name in enumerate(names):
-                row[f"{name} (%)"] = round(float(shares[j, pi]), 1)
-            rows_s.append(row)
-        total_row = {"Indicator": "Total", "MEREC weight": ""}
-        for pi, name in enumerate(names):
-            total_row[f"{name} (%)"] = 100.0
-        rows_s.append(total_row)
-        st.dataframe(pd.DataFrame(rows_s),
-                     use_container_width=True, hide_index=True)
+    # ── Summary tables below charts ───────────────────────────────────────────
+    with st.expander("Detailed tables"):
+        for ci, ckey in enumerate(l3_cats):
+            cat = CATS[ckey]
+            ind_names, ind_units, _ = get_full_indicators(ckey)
+            n_ind = len(ind_names)
+            n2    = n2_data[ckey]
+            w_ind = merec_w[ckey]
+            u = n2 * w_ind[:, None]
+            cat_total = u.sum(axis=0)
+            shares = np.where(cat_total > 0, u / cat_total * 100, 0.0)
+            psi_pct_this = np.where(T > 0, u * final_w[ci] / T * 100, 0.0)
 
-        # ── Table B: Contribution to full PSI ────────────────────────────────
-        st.markdown(
-            "**Contribution to full PSI** "
-            f"(Pct<sup>PSI</sup><sub>j,i</sub> = n2 × w<sup>MEREC</sup> × w<sup>RCW</sup> / T × 100)",
-            unsafe_allow_html=True,
-        )
-        rows_fp = []
-        for j in range(n_ind):
-            row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})"}
-            for pi, name in enumerate(names):
-                row[f"{name} (%)"] = round(float(psi_pct_this[j, pi]), 1)
-            rows_fp.append(row)
-        cat_total_row = {"Indicator": f"Total — {cat['label']}"}
-        for pi, name in enumerate(names):
-            cat_total_row[f"{name} (%)"] = round(float(psi_pct_this[:, pi].sum()), 1)
-        rows_fp.append(cat_total_row)
-        st.dataframe(pd.DataFrame(rows_fp),
-                     use_container_width=True, hide_index=True)
-
-        # ── PSI_j,i table ─────────────────────────────────────────────────────
-        if multi and method_ranks:
-            with st.expander(f"PSI-attributed scores — {cat['label']}"):
-                st.markdown(
-                    "<p style='font-family:Times New Roman,Tinos,serif;"
-                    "font-size:12px;color:#0D2B5E;'>"
-                    "<b>PSI<sub>j,i</sub></b> = PSI<sub>i</sub> × "
-                    "(<i>S<sub>c,i</sub></i>/<i>T<sub>i</sub></i>) × "
-                    "(<i>u<sub>j,i</sub></i>/Σ<i>u<sub>j,i</sub></i>)"
-                    "</p>",
-                    unsafe_allow_html=True,
-                )
-                rows_p = []
-                for j in range(n_ind):
-                    row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})"}
-                    for pi, name in enumerate(names):
-                        row[name] = round(float(psi_ind[j, pi]), 4)
-                    rows_p.append(row)
-                sum_row = {"Indicator": "Sum (= PSI_c,i)"}
-                for pi, name in enumerate(names):
-                    sum_row[name] = round(float(psi_ind[:, pi].sum()), 4)
-                rows_p.append(sum_row)
-                st.dataframe(pd.DataFrame(rows_p),
-                             use_container_width=True, hide_index=True)
-
-        st.write("")
+            st.markdown(
+                f"<span style='background:{cat['bg']};color:{cat['color']};"
+                f"padding:2px 10px;border-radius:12px;font-size:13px;"
+                f"font-weight:600;font-family:Times New Roman,Tinos,serif;'>"
+                f"{cat['label']}</span>", unsafe_allow_html=True,
+            )
+            rows_s = []
+            for j in range(n_ind):
+                row = {"Indicator": f"{ind_names[j]} ({ind_units[j]})",
+                       "MEREC weight": round(float(w_ind[j]), 4)}
+                for pi, pname in enumerate(names):
+                    row[f"{pname} within-cat (%)"] = round(float(shares[j, pi]), 1)
+                for pi, pname in enumerate(names):
+                    row[f"{pname} full (%)"] = round(float(psi_pct_this[j, pi]), 1)
+                rows_s.append(row)
+            total_row = {"Indicator": "Total", "MEREC weight": ""}
+            for pi, pname in enumerate(names):
+                total_row[f"{pname} within-cat (%)"] = 100.0
+                total_row[f"{pname} full (%)"] = round(float(psi_pct_this[:, pi].sum()), 1)
+            rows_s.append(total_row)
+            st.dataframe(pd.DataFrame(rows_s),
+                         use_container_width=True, hide_index=True)
+            st.write("")
 
 
 def analytics_indicator_loo():
@@ -3123,22 +3812,7 @@ def analytics_indicator_loo():
 
 
 def analytics_indicator_intro():
-    st.subheader("2. Indicator-wise analysis")
-
-    sub = st.radio(
-        "Select analysis",
-        [
-            "None - skip",
-            "A. Indicator contribution share",
-            "B. Leave-one-out indicator analysis",
-        ],
-        index=0, key="ind_analysis_radio",
-    )
-
-    if sub.startswith("A."):
-        analytics_indicator_contribution()
-    elif sub.startswith("B."):
-        analytics_indicator_loo()
+    pass  # replaced by analytics_combined_contribution
 
 
 
@@ -3338,18 +4012,21 @@ def auxiliary_intro():
         "Select tool",
         [
             "None - skip",
-            "1. Category-wise contribution analysis",
-            "2. Indicator-wise analysis",
-            "3. Stakeholder preference simulation",
+            "1. Contribution analysis",
+            "2. Leave-one-out: categories",
+            "3. Leave-one-out: indicators",
+            "4. Stakeholder preference simulation",
         ],
         index=0, key="auxiliary_radio",
     )
 
     if choice.startswith("1."):
-        analytics_category_intro()
+        analytics_combined_contribution()
     elif choice.startswith("2."):
-        analytics_indicator_intro()
+        analytics_leave_one_out()
     elif choice.startswith("3."):
+        analytics_indicator_loo()
+    elif choice.startswith("4."):
         analytics_stakeholder_preference()
 
     st.divider()
