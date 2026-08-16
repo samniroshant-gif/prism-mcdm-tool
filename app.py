@@ -2106,6 +2106,19 @@ def step12():
         )
         st.plotly_chart(fig_combo, use_container_width=True)
 
+        n_combos_total = len(combos)
+        summary_rows = []
+        for pi, name in enumerate(names):
+            count = int(np.sum(rank_grid[pi, :] == 1))
+            pct = count / n_combos_total * 100
+            summary_rows.append({
+                "Alternative": name,
+                "Rank 1 count": count,
+                "Rank 1 (%)": round(pct, 1),
+            })
+        st.markdown("**Rank 1 summary across category combinations**")
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
     st.divider()
     c1, c2, c3, c4 = st.columns(4)
     with c1:
