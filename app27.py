@@ -2697,6 +2697,50 @@ def validation_bootstrap_merec_rcw():
     }
 
 
+def _indicator_uncertainty_psi(l3_cats, sel_wm, sel_mcdm, multi, p_psi, rng=None,
+                               unc_pct=0, perturb=False):
+    """Run one PRISM pipeline pass and return PSI vector."""
+    cat_scores_b = {}
+    for ckey in l3_cats:
+        raw, benefits = get_raw_matrix(ckey)
+        if perturb and unc_pct > 0:
+            noise = rng.uniform(
+                1 - unc_pct / 100, 1 + unc_pct / 100, size=raw.shape,
+            )
+            raw_b = np.maximum(raw * noise, 1e-9)
+        else:
+            raw_b = np.maximum(raw, 1e-9)
+
+        nm = np.zeros_like(raw_b)
+        n2 = np.zeros_like(raw_b)
+        for j in range(raw_b.shape[0]):
+            nm[j] = merec_norm(raw_b[j], benefits[j])
+            n2[j] = n2_norm(raw_b[j], benefits[j])
+        w_ind = merec_weights(nm)
+        cat_scores_b[ckey] = (n2 * w_ind[:, None]).sum(axis=0)
+
+    mat_b = np.array([cat_scores_b[c] for c in l3_cats])
+    w_cat_b = get_category_weights(mat_b, sel_wm)
+    wm_b = mat_b * w_cat_b[:, None]
+    ranks_b = run_mcdm_suite(wm_b, w_cat_b, sel_mcdm)
+
+    if multi:
+        psi_b = calc_psi(ranks_b, sel_mcdm, p_psi)
+    else:
+        psi_b = 1.0 / ranks_b[sel_mcdm[0]].astype(float)
+
+    return np.clip(psi_b, 0.0, 1.0), ranks_b
+
+
+def _psi_percentile_ci(samples):
+    """Return (lo, hi, mean) from finite bootstrap PSI samples."""
+    valid = samples[np.isfinite(samples)]
+    if valid.size == 0:
+        return 0.0, 0.0, 0.0
+    lo = float(np.percentile(valid, 2.5))
+    hi = float(np.percentile(valid, 97.5))
+    mn = float(valid.mean())
+    return lo, hi, mn
 
 
 def validation_indicator_uncertainty():
@@ -2750,43 +2794,22 @@ def validation_indicator_uncertainty():
     rng      = np.random.default_rng(42)
     progress = st.progress(0, text="Running indicator uncertainty propagation...")
 
-    psi_boot     = np.zeros((n_iter, n_proc))
+    obs_psi, _ = _indicator_uncertainty_psi(
+        l3_cats, sel_wm, sel_mcdm, multi, p_psi, perturb=False,
+    )
+
+    psi_boot     = np.full((n_iter, n_proc), np.nan)
     rank_counts  = np.zeros((n_proc, n_proc), dtype=int)
+    invalid_iters = 0
 
     for b in range(n_iter):
-        cat_scores_b = {}
-        for ckey in l3_cats:
-            ind_names, ind_units, benefits = get_full_indicators(ckey)
-            n_ind = len(ind_names)
-            raw = np.array([
-                [st.session_state.indicator_values.get((ckey,j,pi), 0.0)
-                 for pi in range(n_proc)]
-                for j in range(n_ind)
-            ], dtype=float)
-
-            # Perturb within ±unc_pct%
-            noise = rng.uniform(1 - unc_pct/100, 1 + unc_pct/100,
-                                size=raw.shape)
-            raw_b = np.maximum(raw * noise, 1e-9)
-
-            nm = np.zeros_like(raw_b)
-            n2 = np.zeros_like(raw_b)
-            for j in range(n_ind):
-                nm[j] = merec_norm(raw_b[j], benefits[j])
-                n2[j] = n2_norm(raw_b[j], benefits[j])
-            w_ind = merec_weights(nm)
-            cat_scores_b[ckey] = (n2 * w_ind[:, None]).sum(axis=0)
-
-        mat_b   = np.array([cat_scores_b[c] for c in l3_cats])
-        w_cat_b = get_category_weights(mat_b, sel_wm)
-        wm_b    = mat_b * w_cat_b[:, None]
-        ranks_b = run_mcdm_suite(wm_b, w_cat_b, sel_mcdm)
-
-        if multi:
-            psi_b = calc_psi(ranks_b, sel_mcdm, p_psi)
-        else:
-            m0    = sel_mcdm[0]
-            psi_b = 1.0 / ranks_b[m0].astype(float)
+        psi_b, ranks_b = _indicator_uncertainty_psi(
+            l3_cats, sel_wm, sel_mcdm, multi, p_psi,
+            rng=rng, unc_pct=unc_pct, perturb=True,
+        )
+        if not np.all(np.isfinite(psi_b)):
+            invalid_iters += 1
+            continue
 
         psi_boot[b] = psi_b
         psi_ranks_b = rank_with_ties(psi_b, ascending=False)
@@ -2795,49 +2818,56 @@ def validation_indicator_uncertainty():
             if 0 <= r < n_proc:
                 rank_counts[pi, r] += 1
 
-        if (b+1) % 50 == 0:
-            progress.progress((b+1)/n_iter,
-                               text=f"Iteration {b+1}/{n_iter}...")
+        if (b + 1) % 50 == 0:
+            progress.progress(
+                (b + 1) / n_iter,
+                text=f"Iteration {b + 1}/{n_iter}...",
+            )
 
     progress.empty()
 
-    nan_count = int(np.isnan(psi_boot).sum())
-    if nan_count:
+    valid_iters = int(np.isfinite(psi_boot).all(axis=1).sum())
+    if invalid_iters:
         st.caption(
-            f"Note: {nan_count} non-finite PSI value(s) replaced during bootstrap."
+            f"Note: {invalid_iters} iteration(s) excluded due to non-finite PSI."
         )
-    psi_boot = np.nan_to_num(psi_boot, nan=0.0, posinf=1.0, neginf=0.0)
+    if valid_iters == 0:
+        st.error("Uncertainty propagation failed — no valid iterations.")
+        return
 
-    # Observed PSI at the same p as bootstrap (recompute if ranks or length mismatch)
-    method_ranks_obs = st.session_state.get("last_method_ranks", {})
-    stored_psi = st.session_state.get("last_psi_scores", None)
-    if multi and method_ranks_obs:
-        obs_psi = calc_psi(method_ranks_obs, sel_mcdm, p_psi)
-    elif stored_psi is not None and len(stored_psi) == n_proc:
-        obs_psi = np.array(stored_psi, dtype=float)
-    elif method_ranks_obs:
-        m0 = sel_mcdm[0]
-        obs_psi = 1.0 / method_ranks_obs[m0].astype(float)
-    else:
-        obs_psi = np.ones(n_proc)
+    invariant_alts = []
 
     # ── PSI CI table ─────────────────────────────────────────────────────────
     st.markdown("**PSI score confidence intervals under ±" + str(unc_pct) + "% indicator uncertainty**")
     rows_ci = []
+    ci_stats = []
+    x_vals = []
     for pi, name in enumerate(names):
-        lo = float(np.percentile(psi_boot[:, pi], 2.5))
-        hi = float(np.percentile(psi_boot[:, pi], 97.5))
-        mn = float(psi_boot[:, pi].mean())
+        col = psi_boot[:, pi]
+        col = col[np.isfinite(col)]
+        lo, hi, mn = _psi_percentile_ci(col)
+        obs = float(obs_psi[pi])
+        if col.size > 1 and float(col.std(ddof=0)) < 1e-9:
+            invariant_alts.append(name)
         rows_ci.append({
             "Alternative":    name,
-            "Observed PSI":   round(float(obs_psi[pi]), 4),
+            "Observed PSI":   round(obs, 4),
             "Bootstrap mean": round(mn, 4),
             "95% CI lower":   round(lo, 4),
             "95% CI upper":   round(hi, 4),
             "CI width":       round(hi - lo, 4),
         })
+        ci_stats.append((lo, hi, mn, obs))
+        x_vals.extend([lo, hi, mn, obs])
     st.dataframe(pd.DataFrame(rows_ci),
                  use_container_width=True, hide_index=True)
+    if invariant_alts:
+        st.caption(
+            "Zero-width CI for "
+            + ", ".join(invariant_alts)
+            + ": MCDM ranks (hence PSI) did not change across any valid iteration "
+            f"under ±{unc_pct}% indicator uncertainty."
+        )
 
     # ── Rank probability table ────────────────────────────────────────────────
     st.markdown("**Rank probability (% of iterations each alternative held each rank)**")
@@ -2845,7 +2875,7 @@ def validation_indicator_uncertainty():
     for pi, name in enumerate(names):
         row = {"Alternative": name}
         for r in range(n_proc):
-            row[f"Rank {r+1} (%)"] = round(rank_counts[pi, r]/n_iter*100, 1)
+            row[f"Rank {r+1} (%)"] = round(rank_counts[pi, r] / valid_iters * 100, 1)
         rows_rp.append(row)
     st.dataframe(pd.DataFrame(rows_rp),
                  use_container_width=True, hide_index=True)
@@ -2857,18 +2887,6 @@ def validation_indicator_uncertainty():
     fig, ax = plt.subplots(
         figsize=(max(6, n_proc * 2.0), max(3.5, n_proc * 1.1)),
     )
-
-    ci_stats = []
-    x_vals = []
-    for pi in range(n_proc):
-        lo = float(np.percentile(psi_boot[:, pi], 2.5))
-        hi = float(np.percentile(psi_boot[:, pi], 97.5))
-        mn = float(psi_boot[:, pi].mean())
-        obs = float(obs_psi[pi])
-        if hi - lo < 1e-6:
-            hi = lo + 1e-3
-        ci_stats.append((lo, hi, mn, obs))
-        x_vals.extend([lo, hi, mn, obs])
 
     for pi, (lo, hi, mn, obs) in enumerate(ci_stats):
         ax.barh(
@@ -2900,7 +2918,7 @@ def validation_indicator_uncertainty():
 
     # ── Summary message ───────────────────────────────────────────────────────
     top_pi  = int(np.argmax([rank_counts[p, 0] for p in range(n_proc)]))
-    pct_top = rank_counts[top_pi, 0] / n_iter * 100
+    pct_top = rank_counts[top_pi, 0] / valid_iters * 100
 
     if pct_top >= 90:
         st.markdown(
@@ -2908,7 +2926,7 @@ def validation_indicator_uncertainty():
             f'padding:8px 12px;border-radius:4px;margin:6px 0;'
             f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#1B5E20;">'
             f'✅ <b>{names[top_pi]}</b> holds Rank 1 in <b>{pct_top:.1f}%</b> of '
-            f'{n_iter} iterations under ±{unc_pct}% indicator uncertainty. '
+            f'{valid_iters} valid iterations under ±{unc_pct}% indicator uncertainty. '
             f'The ranking is robust to realistic data uncertainty.</div>',
             unsafe_allow_html=True,
         )
@@ -2918,7 +2936,7 @@ def validation_indicator_uncertainty():
             f'padding:8px 12px;border-radius:4px;margin:6px 0;'
             f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#7B5800;">'
             f'⚠️ <b>{names[top_pi]}</b> holds Rank 1 in only <b>{pct_top:.1f}%</b> of '
-            f'{n_iter} iterations under ±{unc_pct}% indicator uncertainty. '
+            f'{valid_iters} valid iterations under ±{unc_pct}% indicator uncertainty. '
             f'The ranking is sensitive to data uncertainty — improve data quality '
             f'for indicators with the widest CI ranges.</div>',
             unsafe_allow_html=True,
