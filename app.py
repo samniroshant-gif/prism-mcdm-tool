@@ -2779,9 +2779,7 @@ def validation_indicator_uncertainty():
 
         mat_b   = np.array([cat_scores_b[c] for c in l3_cats])
         w_cat_b = get_category_weights(mat_b, sel_wm)
-        # Weighted matrix: each category score × its RCW weight
-        wm_b    = np.array([mat_b[ci] * w_cat_b[ci]
-                            for ci in range(len(l3_cats))])
+        wm_b    = mat_b * w_cat_b[:, None]
         ranks_b = run_mcdm_suite(wm_b, w_cat_b, sel_mcdm)
 
         if multi:
@@ -2803,14 +2801,23 @@ def validation_indicator_uncertainty():
 
     progress.empty()
 
-    # Observed PSI scores — stored by step12 at p=0.5
-    # If not available (step12 not yet run), compute from last_method_ranks
-    stored_psi = st.session_state.get("last_psi_scores", None)
+    nan_count = int(np.isnan(psi_boot).sum())
+    if nan_count:
+        st.caption(
+            f"Note: {nan_count} non-finite PSI value(s) replaced during bootstrap."
+        )
+    psi_boot = np.nan_to_num(psi_boot, nan=0.0, posinf=1.0, neginf=0.0)
+
+    # Observed PSI at the same p as bootstrap (recompute if ranks or length mismatch)
     method_ranks_obs = st.session_state.get("last_method_ranks", {})
-    if stored_psi is not None:
-        obs_psi = np.array(stored_psi, dtype=float)
-    elif multi and method_ranks_obs:
+    stored_psi = st.session_state.get("last_psi_scores", None)
+    if multi and method_ranks_obs:
         obs_psi = calc_psi(method_ranks_obs, sel_mcdm, p_psi)
+    elif stored_psi is not None and len(stored_psi) == n_proc:
+        obs_psi = np.array(stored_psi, dtype=float)
+    elif method_ranks_obs:
+        m0 = sel_mcdm[0]
+        obs_psi = 1.0 / method_ranks_obs[m0].astype(float)
     else:
         obs_psi = np.ones(n_proc)
 
@@ -2847,17 +2854,42 @@ def validation_indicator_uncertainty():
     st.markdown("**PSI score distributions — 95% CI across iterations**")
     apply_mpl_style()
     shorts = proc_short_labels(names)
-    fig, ax = plt.subplots(figsize=(max(5, n_proc*1.8), 3.5))
+    fig, ax = plt.subplots(
+        figsize=(max(6, n_proc * 2.0), max(3.5, n_proc * 1.1)),
+    )
+
+    ci_stats = []
+    x_vals = []
     for pi in range(n_proc):
         lo = float(np.percentile(psi_boot[:, pi], 2.5))
         hi = float(np.percentile(psi_boot[:, pi], 97.5))
         mn = float(psi_boot[:, pi].mean())
-        ax.barh(pi, hi-lo, left=lo, height=0.5,
-                color="#0D2B5E", alpha=0.3, label="95% CI" if pi==0 else "")
-        ax.scatter(mn, pi, color="#0D2B5E", s=55, zorder=5,
-                   marker="D", label="Bootstrap mean" if pi==0 else "")
-        ax.scatter(float(obs_psi[pi]), pi, color="#E85C1A", s=55, zorder=6,
-                   marker="o", label="Observed PSI" if pi==0 else "")
+        obs = float(obs_psi[pi])
+        if hi - lo < 1e-6:
+            hi = lo + 1e-3
+        ci_stats.append((lo, hi, mn, obs))
+        x_vals.extend([lo, hi, mn, obs])
+
+    for pi, (lo, hi, mn, obs) in enumerate(ci_stats):
+        ax.barh(
+            pi, hi - lo, left=lo, height=0.5,
+            color="#0D2B5E", alpha=0.3,
+            label="95% CI" if pi == 0 else "",
+        )
+        ax.scatter(
+            mn, pi, color="#0D2B5E", s=55, zorder=5,
+            marker="D", label="Bootstrap mean" if pi == 0 else "",
+        )
+        ax.scatter(
+            obs, pi, color="#E85C1A", s=55, zorder=6,
+            marker="o", label="Observed PSI" if pi == 0 else "",
+        )
+
+    xmin = max(0.0, min(x_vals) - 0.05)
+    xmax = min(1.05, max(x_vals) + 0.05)
+    if xmax - xmin < 0.05:
+        xmax = xmin + 0.05
+    ax.set_xlim(xmin, xmax)
     ax.set_yticks(range(n_proc))
     ax.set_yticklabels(shorts, fontsize=9)
     ax.set_xlabel("PSI score", fontsize=10)
