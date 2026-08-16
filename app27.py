@@ -1964,6 +1964,11 @@ def step12():
     method_ranks = run_mcdm_suite(weighted_mat, final_w, methods)
     st.session_state.last_method_ranks = method_ranks
 
+    # Store PSI scores for use in Check 7
+    if multi:
+        psi_stored = calc_psi(method_ranks, methods, 0.5)
+        st.session_state["last_psi_scores"] = psi_stored.tolist()
+
     st.subheader("MCDM rankings")
 
     cols = ["Alternative"] + [METHOD_LABELS[m] for m in methods]
@@ -2774,7 +2779,9 @@ def validation_indicator_uncertainty():
 
         mat_b   = np.array([cat_scores_b[c] for c in l3_cats])
         w_cat_b = get_category_weights(mat_b, sel_wm)
-        wm_b    = mat_b * w_cat_b[:, None]
+        # Weighted matrix: each category score × its RCW weight
+        wm_b    = np.array([mat_b[ci] * w_cat_b[ci]
+                            for ci in range(len(l3_cats))])
         ranks_b = run_mcdm_suite(wm_b, w_cat_b, sel_mcdm)
 
         if multi:
@@ -2796,11 +2803,16 @@ def validation_indicator_uncertainty():
 
     progress.empty()
 
-    # Observed PSI scores
-    obs_psi = np.array(
-        st.session_state.get("last_psi_scores", np.ones(n_proc)),
-        dtype=float
-    )
+    # Observed PSI scores — stored by step12 at p=0.5
+    # If not available (step12 not yet run), compute from last_method_ranks
+    stored_psi = st.session_state.get("last_psi_scores", None)
+    method_ranks_obs = st.session_state.get("last_method_ranks", {})
+    if stored_psi is not None:
+        obs_psi = np.array(stored_psi, dtype=float)
+    elif multi and method_ranks_obs:
+        obs_psi = calc_psi(method_ranks_obs, sel_mcdm, p_psi)
+    else:
+        obs_psi = np.ones(n_proc)
 
     # ── PSI CI table ─────────────────────────────────────────────────────────
     st.markdown("**PSI score confidence intervals under ±" + str(unc_pct) + "% indicator uncertainty**")
