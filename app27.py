@@ -444,13 +444,67 @@ def critic_weights(mat):
 
 
 def rcw_consolidate(weight_sets):
+    """
+    Reciprocal Composite Weighting (RCW).
+
+    Step 1 — Harmonic mean per category j:
+        H_j = n / (1/w_j^Eq + 1/w_j^Ent + 1/w_j^Critic)
+
+    Step 2 — Normalise:
+        w_j^RCW = H_j / Σ_j H_j
+
+    Reference: Novel contribution — see PRISM methodology chapter.
+    """
     k = len(weight_sets[0])
+    n = len(weight_sets)
     harmonics = np.zeros(k)
     for i in range(k):
-        s_inv = sum(1.0 / (ws[i] or 1e-9) for ws in weight_sets)
-        harmonics[i] = 1.0 / s_inv
+        s_inv = sum(1.0 / max(ws[i], 1e-9) for ws in weight_sets)
+        harmonics[i] = n / s_inv if s_inv > 0 else 0.0
     total = harmonics.sum() or 1.0
     return harmonics / total
+
+
+def _harmonic_mean_weights(weight_sets):
+    """Harmonic mean of a list of weight vectors. Returns unnormalised result."""
+    k = len(weight_sets[0])
+    h = np.zeros(k)
+    n = len(weight_sets)
+    for i in range(k):
+        s_inv = sum(1.0 / max(ws[i], 1e-10) for ws in weight_sets)
+        h[i] = n / s_inv if s_inv > 0 else 0.0
+    return h
+
+
+def hrcw_consolidate(w_equal, w_entropy, w_critic):
+    """
+    Hierarchical Reciprocal Composite Weighting (HRCW).
+
+    Two-level harmonic consolidation grouped by epistemic basis:
+
+      Group A — Prior-based (no data assumption):
+          Equal weighting  →  w_prior = w_equal
+
+      Group B — Posterior-based (data-informed):
+          Step 1: Consolidate Entropy and CRITIC within Group B
+                  w_posterior = Harmonic(w_entropy, w_critic)
+          Step 2: Balance prior against posterior
+                  w_HRCW = Harmonic(w_prior, w_posterior)
+                  then normalise to sum = 1
+
+    Reference: Novel contribution — see PRISM methodology chapter.
+    """
+    # Step 1 — within-group consolidation of posterior methods
+    w_posterior_raw = _harmonic_mean_weights([w_entropy, w_critic])
+    total_post = w_posterior_raw.sum()
+    w_posterior = w_posterior_raw / total_post if total_post > 1e-10         else np.full(len(w_equal), 1.0 / len(w_equal))
+
+    # Step 2 — cross-group consolidation: prior vs posterior
+    w_hrcw_raw = _harmonic_mean_weights([w_equal, w_posterior])
+    total_hrcw = w_hrcw_raw.sum()
+    if total_hrcw < 1e-10:
+        return np.full(len(w_equal), 1.0 / len(w_equal))
+    return w_hrcw_raw / total_hrcw
 
 
 def rank_with_ties(values, ascending, eps=1e-6):
@@ -631,14 +685,15 @@ def calc_psi(method_ranks, methods, p):
 
 
 def get_category_weights(mat, weight_methods):
+    """
+    Compute category weights using RCW (harmonic mean consolidation)
+    across selected objective weighting methods.
+    """
     k = mat.shape[0]
     sets = []
-    if "equal" in weight_methods:
-        sets.append(np.full(k, 1.0 / k))
-    if "entropy" in weight_methods:
-        sets.append(entropy_weights(mat))
-    if "critic" in weight_methods:
-        sets.append(critic_weights(mat))
+    if "equal"   in weight_methods: sets.append(np.full(k, 1.0 / k))
+    if "entropy" in weight_methods: sets.append(entropy_weights(mat))
+    if "critic"  in weight_methods: sets.append(critic_weights(mat))
     if not sets:
         return np.full(k, 1.0 / k)
     return rcw_consolidate(sets) if len(sets) > 1 else sets[0]
@@ -1598,6 +1653,66 @@ def compute_level2():
 def step7():
     st.header("Step 7 - MEREC weights")
 
+    # ── Data-driven normalisation recommendation ──────────────────────────────
+    names_s7 = st.session_state.proc_names
+    n_proc_s7 = len(names_s7)
+    all_raw_s7 = []
+    has_zeros_s7 = False
+    for ckey_s7 in ordered_sel_cats():
+        ind_names_s7, _, benefits_s7 = get_full_indicators(ckey_s7)
+        for j in range(len(ind_names_s7)):
+            row_s7 = [st.session_state.indicator_values.get((ckey_s7,j,pi), 0.0)
+                      for pi in range(n_proc_s7)]
+            all_raw_s7.extend(row_s7)
+            if any(v == 0.0 for v in row_s7):
+                has_zeros_s7 = True
+
+    if all_raw_s7:
+        arr_s7    = np.array(all_raw_s7)
+        nz_s7     = arr_s7[arr_s7 > 0]
+        cv_s7     = float(np.std(nz_s7)/np.mean(nz_s7)) if len(nz_s7)>1 else 0.0
+        rng_r_s7  = float(nz_s7.max()/nz_s7.min()) if len(nz_s7)>1 else 1.0
+
+        if has_zeros_s7:
+            rec_title = "N2 (sum-based) — recommended"
+            rec_text  = ("Your data contains zero values. Min-max normalisation "
+                         "produces division by zero for cost indicators. "
+                         "N2 sum-based normalisation handles zeros correctly by "
+                         "using reciprocal transformation with a floor value.")
+            rec_col   = "green"
+        elif rng_r_s7 > 100:
+            rec_title = "N2 (sum-based) — recommended"
+            rec_text  = (f"Your data spans a large range (max/min ratio = {rng_r_s7:.0f}×). "
+                         "Min-max normalisation compresses small differences near the minimum. "
+                         "N2 sum-based normalisation preserves proportional differences "
+                         "between alternatives more faithfully.")
+            rec_col   = "green"
+        elif cv_s7 < 0.15:
+            rec_title = "Any normalisation — low sensitivity expected"
+            rec_text  = (f"Your indicator values show low variation (CV = {cv_s7:.2f}). "
+                         "All normalisation methods will produce similar results. "
+                         "N2 is the PRISM default. Run Validation Check 5 "
+                         "(normalisation sensitivity) to confirm.")
+            rec_col   = "blue"
+        else:
+            rec_title = "N2 (sum-based) — recommended"
+            rec_text  = (f"Standard dataset (CV = {cv_s7:.2f}, range ratio = {rng_r_s7:.1f}×). "
+                         "N2 sum-based normalisation is appropriate as the PRISM default. "
+                         "Verify with Validation Check 5 (normalisation sensitivity).")
+            rec_col   = "green"
+
+        bg_map  = {"green":"#E8F5E9","blue":"#E3F0FC"}
+        bd_map  = {"green":"#16A34A","blue":"#1565C0"}
+        tx_map  = {"green":"#1B5E20","blue":"#0D2B5E"}
+        st.markdown(
+            f'<div style="background:{bg_map[rec_col]};border-left:3px solid {bd_map[rec_col]};'
+            f'padding:8px 12px;border-radius:4px;margin:0 0 12px 0;'
+            f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:{tx_map[rec_col]};">'
+            f'<b>Normalisation recommendation:</b> {rec_title}<br>'
+            f'<span style="font-size:12px;">{rec_text}</span></div>',
+            unsafe_allow_html=True,
+        )
+
     for ckey in ordered_sel_cats():
         cat = CATS[ckey]
         ind_names, ind_units, _ = get_full_indicators(ckey)
@@ -2126,7 +2241,43 @@ def validation_rank_reversal():
     st.dataframe(df_compare, use_container_width=True, hide_index=True)
 
     if reversal_found:
-        st.markdown('<div style="background:#FFF8E1;border-left:3px solid #D97706;padding:8px 12px;border-radius:4px;margin:6px 0;font-family:Times New Roman,Tinos,Times,serif;color:#7B5800;font-size:13px;">Rank-reversal detected: one or more alternatives changed position after exclusion.</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div style="background:#FFF8E1;border-left:3px solid #D97706;'
+            'padding:8px 12px;border-radius:4px;margin:6px 0;'
+            'font-family:Times New Roman,Tinos,Times,serif;color:#7B5800;font-size:13px;">'
+            '⚠️ Rank-reversal detected: one or more alternatives changed position after exclusion.'
+            '</div>', unsafe_allow_html=True)
+
+        st.markdown("**Why did this happen? — RCW weight changes upon exclusion**")
+        st.markdown(
+            "<p style='font-family:Times New Roman,Tinos,serif;font-size:12px;color:#555;'>"
+            "PRISM computes MEREC and RCW weights from the performance data of "
+            "<b>all alternatives simultaneously</b>. When an alternative is removed, "
+            "the normalised indicator values change → MEREC weights change → "
+            "category scores change → Entropy and CRITIC weights change → "
+            "RCW consolidated weights change → rankings change. "
+            "This is an inherent property of data-driven objective weighting — "
+            "not a framework deficiency.</p>",
+            unsafe_allow_html=True,
+        )
+
+        # Show RCW weight change table
+        w_full = st.session_state.final_cat_weights
+        l3_cats_rr = ordered_l3_cats()
+        rows_w = []
+        for ci, ckey in enumerate(l3_cats_rr):
+            rows_w.append({
+                "Category": CATS[ckey]["label"],
+                "RCW weight (all alternatives)": round(float(w_full[ci]), 4),
+                "RCW weight (after exclusion)":  round(float(w_cat_pert[ci]), 4),
+                "Δ Change": f"{float(w_cat_pert[ci]-w_full[ci]):+.4f}",
+            })
+        st.dataframe(pd.DataFrame(rows_w), use_container_width=True, hide_index=True)
+        st.caption(
+            "Categories with the largest Δ Change drove the rank reversal. "
+            "This is expected behaviour of objective weighting — weights are "
+            "recalculated from the remaining alternatives' data."
+        )
     else:
         st.success(
             "✅ No rank-reversal detected: the relative ranking of the remaining alternatives "
@@ -2542,6 +2693,195 @@ def validation_bootstrap_merec_rcw():
 
 
 
+
+def validation_indicator_uncertainty():
+    """
+    Validation Check 7 — Indicator-level uncertainty propagation.
+
+    Propagates ±% uncertainty in raw indicator values through the full
+    PRISM pipeline (MEREC → N2 → CategoryScores → RCW → MCDM → PSI)
+    using Monte Carlo sampling.
+
+    Addresses Limitation L3: uncertainty in raw indicator values is not
+    captured by weight-level Monte Carlo (Check 3) alone.
+    """
+    st.subheader("7. Indicator-level uncertainty propagation")
+
+    names    = st.session_state.proc_names
+    n_proc   = len(names)
+    l3_cats  = ordered_l3_cats()
+    sel_wm   = st.session_state.sel_weight_methods
+    sel_mcdm = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+    multi    = len(sel_mcdm) > 1
+
+    c1, c2 = st.columns(2)
+    with c1:
+        unc_pct = st.slider(
+            "Indicator value uncertainty (±%)",
+            min_value=1, max_value=50, value=10, step=1,
+            key="ind_unc_pct",
+            help="Each indicator value sampled uniformly within ±this% of observed.",
+        )
+    with c2:
+        n_iter = st.slider(
+            "Monte Carlo iterations",
+            min_value=100, max_value=2000, value=500, step=100,
+            key="ind_unc_iter",
+        )
+
+    p_psi = st.slider(
+        "p value (PSI)", min_value=0.0, max_value=1.0,
+        value=0.5, step=0.01, key="ind_unc_p",
+    )
+
+    if not st.button("Run uncertainty propagation", type="primary",
+                     key="ind_unc_run"):
+        st.info(
+            "This check propagates measurement uncertainty in indicator values "
+            "through the full PRISM pipeline. Set ±% uncertainty and click Run."
+        )
+        return
+
+    rng      = np.random.default_rng(42)
+    progress = st.progress(0, text="Running indicator uncertainty propagation...")
+
+    psi_boot     = np.zeros((n_iter, n_proc))
+    rank_counts  = np.zeros((n_proc, n_proc), dtype=int)
+
+    for b in range(n_iter):
+        cat_scores_b = {}
+        for ckey in l3_cats:
+            ind_names, ind_units, benefits = get_full_indicators(ckey)
+            n_ind = len(ind_names)
+            raw = np.array([
+                [st.session_state.indicator_values.get((ckey,j,pi), 0.0)
+                 for pi in range(n_proc)]
+                for j in range(n_ind)
+            ], dtype=float)
+
+            # Perturb within ±unc_pct%
+            noise = rng.uniform(1 - unc_pct/100, 1 + unc_pct/100,
+                                size=raw.shape)
+            raw_b = np.maximum(raw * noise, 1e-9)
+
+            nm = np.zeros_like(raw_b)
+            n2 = np.zeros_like(raw_b)
+            for j in range(n_ind):
+                nm[j] = merec_norm(raw_b[j], benefits[j])
+                n2[j] = n2_norm(raw_b[j], benefits[j])
+            w_ind = merec_weights(nm)
+            cat_scores_b[ckey] = (n2 * w_ind[:, None]).sum(axis=0)
+
+        mat_b   = np.array([cat_scores_b[c] for c in l3_cats])
+        w_cat_b = get_category_weights(mat_b, sel_wm)
+        wm_b    = mat_b * w_cat_b[:, None]
+        ranks_b = run_mcdm_suite(wm_b, w_cat_b, sel_mcdm)
+
+        if multi:
+            psi_b = calc_psi(ranks_b, sel_mcdm, p_psi)
+        else:
+            m0    = sel_mcdm[0]
+            psi_b = 1.0 / ranks_b[m0].astype(float)
+
+        psi_boot[b] = psi_b
+        psi_ranks_b = rank_with_ties(psi_b, ascending=False)
+        for pi in range(n_proc):
+            r = int(psi_ranks_b[pi]) - 1
+            if 0 <= r < n_proc:
+                rank_counts[pi, r] += 1
+
+        if (b+1) % 50 == 0:
+            progress.progress((b+1)/n_iter,
+                               text=f"Iteration {b+1}/{n_iter}...")
+
+    progress.empty()
+
+    # Observed PSI scores
+    obs_psi = np.array(
+        st.session_state.get("last_psi_scores", np.ones(n_proc)),
+        dtype=float
+    )
+
+    # ── PSI CI table ─────────────────────────────────────────────────────────
+    st.markdown("**PSI score confidence intervals under ±" + str(unc_pct) + "% indicator uncertainty**")
+    rows_ci = []
+    for pi, name in enumerate(names):
+        lo = float(np.percentile(psi_boot[:, pi], 2.5))
+        hi = float(np.percentile(psi_boot[:, pi], 97.5))
+        mn = float(psi_boot[:, pi].mean())
+        rows_ci.append({
+            "Alternative":    name,
+            "Observed PSI":   round(float(obs_psi[pi]), 4),
+            "Bootstrap mean": round(mn, 4),
+            "95% CI lower":   round(lo, 4),
+            "95% CI upper":   round(hi, 4),
+            "CI width":       round(hi - lo, 4),
+        })
+    st.dataframe(pd.DataFrame(rows_ci),
+                 use_container_width=True, hide_index=True)
+
+    # ── Rank probability table ────────────────────────────────────────────────
+    st.markdown("**Rank probability (% of iterations each alternative held each rank)**")
+    rows_rp = []
+    for pi, name in enumerate(names):
+        row = {"Alternative": name}
+        for r in range(n_proc):
+            row[f"Rank {r+1} (%)"] = round(rank_counts[pi, r]/n_iter*100, 1)
+        rows_rp.append(row)
+    st.dataframe(pd.DataFrame(rows_rp),
+                 use_container_width=True, hide_index=True)
+
+    # ── PSI distribution chart ────────────────────────────────────────────────
+    st.markdown("**PSI score distributions — 95% CI across iterations**")
+    apply_mpl_style()
+    shorts = proc_short_labels(names)
+    fig, ax = plt.subplots(figsize=(max(5, n_proc*1.8), 3.5))
+    for pi in range(n_proc):
+        lo = float(np.percentile(psi_boot[:, pi], 2.5))
+        hi = float(np.percentile(psi_boot[:, pi], 97.5))
+        mn = float(psi_boot[:, pi].mean())
+        ax.barh(pi, hi-lo, left=lo, height=0.5,
+                color="#0D2B5E", alpha=0.3, label="95% CI" if pi==0 else "")
+        ax.scatter(mn, pi, color="#0D2B5E", s=55, zorder=5,
+                   marker="D", label="Bootstrap mean" if pi==0 else "")
+        ax.scatter(float(obs_psi[pi]), pi, color="#E85C1A", s=55, zorder=6,
+                   marker="o", label="Observed PSI" if pi==0 else "")
+    ax.set_yticks(range(n_proc))
+    ax.set_yticklabels(shorts, fontsize=9)
+    ax.set_xlabel("PSI score", fontsize=10)
+    ax.legend(fontsize=8, frameon=False, loc="lower right")
+    ax.tick_params(labelsize=9)
+    plt.tight_layout()
+    mpl_show(fig)
+
+    # ── Summary message ───────────────────────────────────────────────────────
+    top_pi  = int(np.argmax([rank_counts[p, 0] for p in range(n_proc)]))
+    pct_top = rank_counts[top_pi, 0] / n_iter * 100
+
+    if pct_top >= 90:
+        st.markdown(
+            f'<div style="background:#E8F5E9;border-left:3px solid #16A34A;'
+            f'padding:8px 12px;border-radius:4px;margin:6px 0;'
+            f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#1B5E20;">'
+            f'✅ <b>{names[top_pi]}</b> holds Rank 1 in <b>{pct_top:.1f}%</b> of '
+            f'{n_iter} iterations under ±{unc_pct}% indicator uncertainty. '
+            f'The ranking is robust to realistic data uncertainty.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="background:#FFF8E1;border-left:3px solid #D97706;'
+            f'padding:8px 12px;border-radius:4px;margin:6px 0;'
+            f'font-family:Times New Roman,Tinos,serif;font-size:13px;color:#7B5800;">'
+            f'⚠️ <b>{names[top_pi]}</b> holds Rank 1 in only <b>{pct_top:.1f}%</b> of '
+            f'{n_iter} iterations under ±{unc_pct}% indicator uncertainty. '
+            f'The ranking is sensitive to data uncertainty — improve data quality '
+            f'for indicators with the widest CI ranges.</div>',
+            unsafe_allow_html=True,
+        )
+
+
+
 def validation_intro():
     st.header("Step 13 - Validation (optional)")
 
@@ -2555,6 +2895,7 @@ def validation_intro():
             "4. Rank-reversal test",
             "5. Normalisation sensitivity",
             "6. Bootstrap stability (MEREC and RCW)",
+            "7. Indicator-level uncertainty propagation",
         ],
         index=0, key="validation_radio",
     )
@@ -2572,6 +2913,8 @@ def validation_intro():
         validation_normalisation_sensitivity()
     elif choice.startswith("6."):
         validation_bootstrap_merec_rcw()
+    elif choice.startswith("7."):
+        validation_indicator_uncertainty()
 
     st.divider()
     c1, c2 = st.columns(2)
@@ -3219,93 +3562,71 @@ def analytics_combined_contribution():
                     ha="center", va="center", fontsize=8.5,
                     fontfamily="Times New Roman", color="#444444")
 
-        # ── Category % labels inside inner ring ───────────────────────────────
+        # ── Category % labels inside inner ring ─────────────────────────────
         for ci, (wedge, sz) in enumerate(zip(wedges_inner, inner_sizes)):
-            if sz < 3:
+            if sz < 1.0:   # only skip truly invisible slices
                 continue
             ang = (wedge.theta1 + wedge.theta2) / 2
-            # Note: pie uses counterclockwise by default but we set counterclock=False
             r_lbl = 0.47
             x = r_lbl * np.cos(np.deg2rad(ang))
             y = r_lbl * np.sin(np.deg2rad(ang))
-            lbl = CATS[l3_cats[ci]]['label'][:3] + '\n' + f'{sz:.1f}%'
+            # For small slices show only %, for larger show abbrev + %
+            if sz < 5:
+                lbl = f'{sz:.1f}%'
+            else:
+                lbl = CATS[l3_cats[ci]]['label'][:3] + '\n' + f'{sz:.1f}%'
             ax.text(x, y, lbl, ha="center", va="center",
-                    fontsize=8.5, fontweight="bold",
+                    fontsize=7.5 if sz >= 5 else 6.5,
+                    fontweight="bold",
                     fontfamily="Times New Roman", color="white")
 
-        # ── Leader lines + collision-aware outer labels ───────────────────────
-        # Tiny slices clutter the chart; keep values in the tables below.
-        MIN_LABEL_PCT = 1.5
-        line_start = 1.20
-        radii_alt = (1.42, 1.65)
-        min_dy = 0.11
+        # ── Leader lines + labels for ALL outer indicators ────────────────────
+        label_radius = 1.48  # where label anchor sits
+        line_start   = 1.20  # just outside outer ring edge
+        line_end     = 1.36  # end of leader line
 
-        candidates = []
         for j, (wedge, sz) in enumerate(zip(wedges_outer, outer_sizes)):
-            pct = float(ind_psi_pct[j, pi])
-            if pct < MIN_LABEL_PCT:
-                continue
             ang_deg = (wedge.theta1 + wedge.theta2) / 2
-            candidates.append((ang_deg, j, pct))
-
-        candidates.sort(key=lambda t: t[0])
-
-        # Place left and right sides independently with vertical deconflict.
-        placed = {"left": [], "right": []}  # list of dicts
-        for k, (ang_deg, j, pct) in enumerate(candidates):
             ang_rad = np.deg2rad(ang_deg)
-            cos_a = np.cos(ang_rad)
-            sin_a = np.sin(ang_rad)
-            side = "right" if cos_a >= 0 else "left"
-            ha = "left" if side == "right" else "right"
-            r_lbl = radii_alt[k % 2]
-            xl = r_lbl * cos_a
-            yl = r_lbl * sin_a
+            cos_a   = np.cos(ang_rad)
+            sin_a   = np.sin(ang_rad)
+
+            # Leader line: start at outer edge → elbow → label
             x0 = line_start * cos_a
             y0 = line_start * sin_a
-            short_nm = short_name(ind_labels[j])
-            lbl_txt = f"{short_nm}  {pct:.1f}%"
-            placed[side].append({
-                "yl": yl, "xl": xl, "ha": ha, "txt": lbl_txt,
-                "x0": x0, "y0": y0,
-            })
+            x1 = line_end   * cos_a
+            y1 = line_end   * sin_a
 
-        for side in ("left", "right"):
-            items = sorted(placed[side], key=lambda d: d["yl"])
-            for i in range(1, len(items)):
-                if items[i]["yl"] - items[i - 1]["yl"] < min_dy:
-                    items[i]["yl"] = items[i - 1]["yl"] + min_dy
-            placed[side] = items
-
-        for d in placed["left"] + placed["right"]:
-            xl, yl = d["xl"], d["yl"]
-            x1, y1 = 0.92 * xl, 0.92 * yl
             ax.annotate(
                 "",
-                xy=(x1, y1), xytext=(d["x0"], d["y0"]),
+                xy=(x1, y1), xytext=(x0, y0),
                 arrowprops=dict(arrowstyle="-", color="#888888",
                                 lw=0.7, shrinkA=0, shrinkB=0),
             )
-            ax.plot([x1, xl], [y1, yl], color="#888888", lw=0.7)
-            ax.text(xl, yl, d["txt"],
-                    ha=d["ha"], va="center",
-                    fontsize=10.0,
+
+            # Label position — push further out left/right based on angle
+            ha = "left" if cos_a >= 0 else "right"
+            xl = label_radius * cos_a
+            yl = label_radius * sin_a
+
+            short_nm = short_name(ind_labels[j])
+            lbl_txt  = f"{short_nm}  {float(ind_psi_pct[j,pi]):.1f}%"
+
+            ax.text(xl, yl, lbl_txt,
+                    ha=ha, va="center",
+                    fontsize=12.0,
                     fontfamily="Times New Roman",
                     color="#111111",
                     bbox=dict(boxstyle="round,pad=0.18",
-                              fc="white", ec="none", alpha=0.9))
+                              fc="white", ec="none", alpha=0.85))
 
-        ax.set_xlim(-1.95, 1.95)
-        ax.set_ylim(-1.95, 1.95)
+        ax.set_xlim(-1.72, 1.72)
+        ax.set_ylim(-1.72, 1.72)
         ax.set_title(
             f"{name}",
             fontsize=13, fontweight="bold",
             fontfamily="Times New Roman", color="#0D2B5E", pad=10,
         )
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        ax.set_xticks([])
-        ax.set_yticks([])
         plt.tight_layout()
         mpl_show(fig)
 
@@ -3637,20 +3958,21 @@ def analytics_indicator_contribution():
 
         # ── Data labels on outer ring — indicator short name + % ─────────────
         for j, (wedge, sz) in enumerate(zip(wedges_outer, outer_sizes)):
-            if sz < 2.5:  # skip tiny slices — too crowded
-                continue
+            # Show ALL slices — use shorter label for tiny ones
             ang  = (wedge.theta1 + wedge.theta2) / 2
-            # Label at 1.13 radius (just outside the outer ring)
-            xl = 1.14 * np.cos(np.deg2rad(ang))
-            yl = 1.14 * np.sin(np.deg2rad(ang))
-            short_name = ind_labels[j][:10]  # truncate long names
-            label_txt  = f"{short_name}\n{sz:.1f}%"
+            xl   = 1.14 * np.cos(np.deg2rad(ang))
+            yl   = 1.14 * np.sin(np.deg2rad(ang))
+            ha   = "left" if np.cos(np.deg2rad(ang)) >= 0 else "right"
+            if sz < 2.0:
+                label_txt = f"{sz:.1f}%"   # % only for tiny slices
+            else:
+                label_txt = f"{short_name(ind_labels[j])}  {sz:.1f}%"
             ax.text(xl, yl, label_txt,
-                    ha="center", va="center",
-                    fontsize=6.2, fontfamily="Times New Roman",
+                    ha=ha, va="center",
+                    fontsize=7.5, fontfamily="Times New Roman",
                     color="#222222",
                     bbox=dict(boxstyle="round,pad=0.15", fc="white",
-                              ec="none", alpha=0.7))
+                              ec="none", alpha=0.85))
 
         # ── Indicator legend — right side ─────────────────────────────────────
         legend_patches = []
