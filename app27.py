@@ -2114,17 +2114,6 @@ def step12():
         st.plotly_chart(fig_combo, use_container_width=True)
 
         n_combos_total = len(combos)
-        summary_rows = []
-        for pi, name in enumerate(names):
-            count = int(np.sum(rank_grid[pi, :] == 1))
-            pct = count / n_combos_total * 100
-            summary_rows.append({
-                "Alternative": name,
-                "Rank 1 count": count,
-                "Rank 1 (%)": round(pct, 1),
-            })
-        st.markdown("**Rank 1 summary across category combinations**")
-        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
         # Only offer the PSI-combo tie-breaker if the headline PSI ranking
         # (p = 0.50, shown in the MCDM rankings table at the top of this step)
@@ -2852,7 +2841,7 @@ def validation_indicator_uncertainty():
     with c2:
         n_iter = st.slider(
             "Monte Carlo iterations",
-            min_value=100, max_value=2000, value=500, step=100,
+            min_value=100, max_value=10000, value=500, step=100,
             key="ind_unc_iter",
         )
 
