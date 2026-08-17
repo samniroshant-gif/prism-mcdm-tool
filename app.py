@@ -1005,6 +1005,11 @@ def build_excel_report():
             psi = calc_psi(mr, methods, 0.5)
             psi_ranks = rank_with_ties(psi, ascending=False)
             headers += ["PSI Score (p=0.5)", "PSI Rank"]
+        psi_combo_scores = ss.get("last_psi_combo_scores")
+        psi_combo_ranks = ss.get("last_psi_combo_ranks")
+        has_combo = bool(psi_combo_scores) and len(psi_combo_scores) == n_proc
+        if has_combo:
+            headers += ["PSI-combo Score (combo tie-breaker)", "PSI-combo Rank"]
         for ci, h in enumerate(headers, 1):
             ws6.cell(3, ci, h).font = HDR_FONT
             ws6.cell(3, ci).fill = HDR_FILL
@@ -1014,6 +1019,8 @@ def build_excel_report():
             row_data = [name] + [int(mr[m][pi]) for m in methods if m in mr]
             if len(methods) > 1:
                 row_data += [round(float(psi[pi]), 4), int(psi_ranks[pi])]
+            if has_combo:
+                row_data += [round(float(psi_combo_scores[pi]), 4), int(psi_combo_ranks[pi])]
             for ci, val in enumerate(row_data, 1):
                 ws6.cell(4 + pi, ci, val).font = BODY_FONT
             style_body(ws6, 4 + pi, len(headers))
@@ -2118,6 +2125,64 @@ def step12():
             })
         st.markdown("**Rank 1 summary across category combinations**")
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+        # Only offer the PSI-combo tie-breaker if the headline PSI ranking
+        # (p = 0.50, shown in the MCDM rankings table at the top of this step)
+        # actually has more than one alternative sharing rank 1.
+        top_tie_count = int(np.sum(psi_rank_05 == psi_rank_05.min()))
+        if top_tie_count > 1:
+            st.divider()
+            st.subheader("Tie-breaker: PSI-combo (recursive PSI across category combinations)")
+            tied_top_names = ", ".join(names[i] for i in range(n_proc) if psi_rank_05[i] == psi_rank_05.min())
+            st.markdown(
+                "<p style='font-family:Times New Roman,serif;font-size:13px;"
+                "color:#0D2B5E;margin:4px 0;text-align:center;'>"
+                f"The headline PSI ranking (p = 0.50) is tied for rank 1 between "
+                f"<b>{tied_top_names}</b>. The PSI equation can be applied a second "
+                "time — using each alternative's rank across the "
+                f"{n_combos_total} category combinations above as the input set, "
+                "in place of the ranks from the individual MCDM methods — to break the tie."
+                "</p>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "<p style='font-family:Times New Roman,serif;font-size:13px;"
+                "color:#0D2B5E;margin:4px 0;text-align:center;'>"
+                "<b>PSI</b><sup>combo</sup><sub>i</sub> = "
+                "<i>M</i><sub>i</sub><sup>p</sup> × "
+                "<i>A</i><sub>i</sub><sup>(1−p)</sup> &nbsp;|&nbsp; "
+                "<i>M</i><sub>i</sub> = 1 / <i>R̄</i><sup>combo</sup><sub>i</sub> &nbsp;|&nbsp; "
+                "<i>A</i><sub>i</sub> = 1 / (1 + <i>CV</i><sup>combo</sup><sub>i</sub>) &nbsp;|&nbsp; "
+                f"ranks drawn from all {n_combos_total} category combinations"
+                "</p>",
+                unsafe_allow_html=True,
+            )
+
+            psi_combo_p = st.slider("p for PSI-combo tie-breaker", min_value=0.01, max_value=0.99,
+                                     value=0.5, step=0.01, key="psi_combo_p_slider")
+
+            combo_rank_dict = {ci: rank_grid[:, ci] for ci in range(n_combos_total)}
+            combo_keys_list = list(range(n_combos_total))
+            psi_combo_scores = calc_psi(combo_rank_dict, combo_keys_list, psi_combo_p)
+            psi_combo_ranks = rank_with_ties(psi_combo_scores, ascending=False)
+            st.session_state["last_psi_combo_scores"] = psi_combo_scores.tolist()
+            st.session_state["last_psi_combo_ranks"] = psi_combo_ranks.tolist()
+
+            combo_bar_cols = st.columns(len(names))
+            for i, name in enumerate(names):
+                with combo_bar_cols[i]:
+                    st.metric(name, f"{psi_combo_scores[i]:.4f}", f"rank {psi_combo_ranks[i]}")
+
+            winner_idx = int(np.argmin(psi_combo_ranks))
+            n_leaders = int(np.sum(psi_combo_ranks == psi_combo_ranks.min()))
+            if n_leaders == 1:
+                st.success(f"**Overall winner (PSI-combo tie-breaker):** {names[winner_idx]}")
+            else:
+                tied_names = ", ".join(names[i] for i in range(n_proc) if psi_combo_ranks[i] == psi_combo_ranks.min())
+                st.warning(f"PSI-combo tie-breaker still balanced between: {tied_names}")
+        else:
+            st.session_state.pop("last_psi_combo_scores", None)
+            st.session_state.pop("last_psi_combo_ranks", None)
 
     st.divider()
     c1, c2, c3, c4 = st.columns(4)
