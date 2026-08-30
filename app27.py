@@ -430,6 +430,35 @@ footer {{visibility: hidden;}}
     border-radius: 4px;
     margin: 3px 6px 3px 0;
 }}
+.prism-traffic-badge {{
+    display: inline-block;
+    font-family: {_FONT_CSS};
+    font-size: 11pt;
+    font-weight: 600;
+    padding: 8px 18px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+}}
+.prism-traffic-green {{
+    background: #DCFCE7;
+    color: #166534;
+    border: 1px solid #86EFAC;
+}}
+.prism-traffic-amber {{
+    background: #FEF3C7;
+    color: #92400E;
+    border: 1px solid #FCD34D;
+}}
+.prism-traffic-red {{
+    background: #FEE2E2;
+    color: #991B1B;
+    border: 1px solid #FCA5A5;
+}}
+.prism-traffic-na {{
+    background: #F3F4F6;
+    color: #4B5563;
+    border: 1px solid #D1D5DB;
+}}
 .prism-framework {{
     margin: 8px 0 24px 0;
 }}
@@ -4036,38 +4065,466 @@ def validation_indicator_uncertainty():
 
 
 
+TRAFFIC_LABELS = {
+    "green": "Robust",
+    "amber": "Partially sensitive",
+    "red": "Sensitive",
+    "na": "Not applicable",
+}
+
+
+def _status_from_rank1_pct(pct):
+    if pct >= 70:
+        return "green"
+    if pct >= 40:
+        return "amber"
+    return "red"
+
+
+def _winner_headline_rank(method_ranks, methods, winner_idx, p=0.5):
+    if len(methods) > 1:
+        psi = calc_psi(method_ranks, methods, p)
+        return int(rank_with_ties(psi, ascending=False)[winner_idx])
+    return int(method_ranks[methods[0]][winner_idx])
+
+
+def _assess_weight_sensitivity(winner_idx, l3_cats, cat_scores, methods):
+    mat = np.array([cat_scores[c] for c in l3_cats])
+    winner_ranks = []
+    for combo_methods, _ in WEIGHT_COMBO_SETS:
+        w = get_category_weights(mat, set(combo_methods))
+        weighted_mat = mat * w[:, None]
+        ranks = run_mcdm_suite(weighted_mat, w, methods)
+        if len(methods) > 1:
+            psi = calc_psi(ranks, methods, 0.5)
+            winner_ranks.append(int(rank_with_ties(psi, ascending=False)[winner_idx]))
+        else:
+            winner_ranks.append(int(ranks[methods[0]][winner_idx]))
+    if all(r == 1 for r in winner_ranks):
+        status, detail = "green", "Winner Rank 1 across all category weighting schemes"
+    elif max(winner_ranks) <= 2:
+        status = "amber"
+        detail = f"Winner rank varies (ranks {min(winner_ranks)}–{max(winner_ranks)}) but remains competitive"
+    else:
+        status = "red"
+        detail = f"Winner loses top rank under some weighting schemes (worst rank {max(winner_ranks)})"
+    return {
+        "id": "weighting", "name": "Weighting-method sensitivity",
+        "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+    }
+
+
+def _assess_bc_sensitivity(winner_idx, l3_cats, methods, method_ranks, sel_wm):
+    names = st.session_state.proc_names
+    multi = len(methods) > 1
+    base_rank = _winner_headline_rank(method_ranks, methods, winner_idx, 0.5)
+
+    rng_bc = np.random.default_rng(42)
+    ben_pct, cost_pct = 10, 10
+    cat_scores_pert = {}
+    for ckey in l3_cats:
+        raw, benefits = get_raw_matrix(ckey)
+        raw_pert = raw.copy()
+        for j in range(raw.shape[0]):
+            pct = ben_pct if benefits[j] else cost_pct
+            half = abs(pct) * 0.5
+            noise = rng_bc.uniform(-half, half, size=raw.shape[1])
+            factors = 1 + (pct + noise) / 100.0
+            raw_pert[j] = np.maximum(raw[j] * factors, 1e-9)
+        cat_scores_pert[ckey] = compute_category_score_from_raw(ckey, raw_pert)
+
+    mat = np.array([cat_scores_pert[c] for c in l3_cats])
+    w = get_category_weights(mat, sel_wm)
+    weighted_mat = mat * w[:, None]
+    ranks = run_mcdm_suite(weighted_mat, w, methods)
+    if multi:
+        pert_rank = int(rank_with_ties(calc_psi(ranks, methods, 0.5), ascending=False)[winner_idx])
+    else:
+        pert_rank = int(ranks[methods[0]][winner_idx])
+
+    if pert_rank == base_rank:
+        status, detail = "green", f"No winner rank change under ±{ben_pct}% benefit / ±{cost_pct}% cost perturbation"
+    elif pert_rank <= 2 and base_rank == 1:
+        status = "amber"
+        detail = f"Winner rank shifts from {base_rank} to {pert_rank} under ±10% indicator perturbation"
+    else:
+        status = "red"
+        detail = f"Winner rank changes from {base_rank} to {pert_rank} under ±10% indicator perturbation"
+    return {
+        "id": "bc", "name": "Benefit/Cost indicator sensitivity",
+        "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+    }
+
+
+def _assess_monte_carlo(winner_idx, l3_cats, cat_scores, methods, final_w, n_iter=1000):
+    names = st.session_state.proc_names
+    n_proc = len(names)
+    mat = np.array([cat_scores[c] for c in l3_cats])
+    k_value, _, _, _ = compute_dirichlet_k(mat)
+    alpha_scale = 1.0 + (k_value / 100.0) * 49.0
+    alpha = np.maximum(final_w * alpha_scale, 0.05)
+    rng = np.random.default_rng(42)
+    draws = rng.dirichlet(alpha, size=n_iter)
+    rank1_count = 0
+    p_val = 0.5
+    for it in range(n_iter):
+        w_draw = draws[it]
+        weighted_mat = mat * w_draw[:, None]
+        ranks_draw = run_mcdm_suite(weighted_mat, w_draw, methods)
+        if len(methods) > 1:
+            psi_ranks = rank_with_ties(calc_psi(ranks_draw, methods, p_val), ascending=False)
+        else:
+            psi_ranks = ranks_draw[methods[0]]
+        if int(psi_ranks[winner_idx]) == 1:
+            rank1_count += 1
+    pct = rank1_count / n_iter * 100
+    status = _status_from_rank1_pct(pct)
+    detail = f"Winner holds Rank 1 in {pct:.1f}% of {n_iter:,} Monte Carlo weight draws"
+    return {
+        "id": "monte_carlo", "name": "Monte Carlo uncertainty (Dirichlet)",
+        "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+    }
+
+
+def _assess_rank_reversal(winner_idx, l3_cats, methods, method_ranks, sel_wm, names):
+    n_proc = len(names)
+    if n_proc < 3:
+        return {
+            "id": "rank_reversal", "name": "Rank-reversal test",
+            "status": "na", "detail": "Requires at least 3 alternatives",
+            "status_label": TRAFFIC_LABELS["na"],
+        }
+
+    multi = len(methods) > 1
+    if multi:
+        baseline_all = rank_with_ties(calc_psi(method_ranks, methods, 0.5), ascending=False)
+    else:
+        baseline_all = method_ranks[methods[0]]
+
+    exclude_idx = max(
+        (pi for pi in range(n_proc) if pi != winner_idx),
+        key=lambda pi: int(baseline_all[pi]),
+    )
+    keep_idx = [i for i in range(n_proc) if i != exclude_idx]
+    wi_kept = keep_idx.index(winner_idx)
+
+    base_method_ranks_kept = {}
+    for m in methods:
+        scores_kept = np.array([method_ranks[m][i] for i in keep_idx], dtype=float)
+        base_method_ranks_kept[m] = rank_with_ties(scores_kept, ascending=True)
+
+    cat_scores_pert = {}
+    for ckey in l3_cats:
+        ind_names, _, benefits = get_full_indicators(ckey)
+        n_ind = len(ind_names)
+        raw_full = np.zeros((n_ind, n_proc))
+        for j in range(n_ind):
+            for pi in range(n_proc):
+                raw_full[j, pi] = st.session_state.indicator_values.get((ckey, j, pi), 0.0)
+        raw_kept = raw_full[:, keep_idx]
+        nm = np.zeros_like(raw_kept)
+        n2 = np.zeros_like(raw_kept)
+        for j in range(n_ind):
+            nm[j] = merec_norm(raw_kept[j], benefits[j])
+            n2[j] = n2_norm(raw_kept[j], benefits[j])
+        w_ind = merec_weights(nm)
+        cat_scores_pert[ckey] = (n2 * w_ind[:, None]).sum(axis=0)
+
+    mat_pert = np.array([cat_scores_pert[c] for c in l3_cats])
+    w_cat_pert = get_category_weights(mat_pert, sel_wm)
+    weighted_mat_pert = mat_pert * w_cat_pert[:, None]
+    ranks_pert = run_mcdm_suite(weighted_mat_pert, w_cat_pert, methods)
+
+    if multi:
+        base_rank = int(rank_with_ties(
+            calc_psi(base_method_ranks_kept, methods, 0.5), ascending=False,
+        )[wi_kept])
+        pert_rank = int(rank_with_ties(calc_psi(ranks_pert, methods, 0.5), ascending=False)[wi_kept])
+    else:
+        base_rank = int(base_method_ranks_kept[methods[0]][wi_kept])
+        pert_rank = int(ranks_pert[methods[0]][wi_kept])
+
+    excluded_name = names[exclude_idx]
+    if pert_rank == base_rank:
+        status, detail = "green", f"No rank reversal for winner after excluding {excluded_name}"
+    else:
+        status, detail = "red", f"Winner rank changes ({base_rank} → {pert_rank}) after excluding {excluded_name}"
+    return {
+        "id": "rank_reversal", "name": "Rank-reversal test",
+        "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+    }
+
+
+def _assess_normalisation(winner_idx, l3_cats, methods, method_ranks, sel_wm):
+    def minmax_norm(vals, benefit):
+        vals = np.asarray(vals, dtype=float)
+        mn, mx = vals.min(), vals.max()
+        rng = (mx - mn) or 1.0
+        return (vals - mn) / rng if benefit else (mx - vals) / rng
+
+    multi = len(methods) > 1
+    base_rank = _winner_headline_rank(method_ranks, methods, winner_idx, 0.5)
+
+    cat_scores_alt = {}
+    for ckey in l3_cats:
+        ind_names, _, benefits = get_full_indicators(ckey)
+        raw, _ = get_raw_matrix(ckey)
+        nm = np.zeros_like(raw)
+        for j in range(len(ind_names)):
+            nm[j] = merec_norm(raw[j], benefits[j])
+        w_ind = merec_weights(nm)
+        alt_n = np.zeros_like(raw)
+        for j in range(len(ind_names)):
+            alt_n[j] = minmax_norm(raw[j], benefits[j])
+        cat_scores_alt[ckey] = (alt_n * w_ind[:, None]).sum(axis=0)
+
+    mat_alt = np.array([cat_scores_alt[c] for c in l3_cats])
+    w_cat_alt = get_category_weights(mat_alt, sel_wm)
+    weighted_mat_alt = mat_alt * w_cat_alt[:, None]
+    ranks_alt = run_mcdm_suite(weighted_mat_alt, w_cat_alt, methods)
+    if multi:
+        alt_rank = int(rank_with_ties(calc_psi(ranks_alt, methods, 0.5), ascending=False)[winner_idx])
+    else:
+        alt_rank = int(ranks_alt[methods[0]][winner_idx])
+
+    if alt_rank == base_rank:
+        status, detail = "green", "Winner rank unchanged when switching N2 to Min-max normalisation"
+    elif alt_rank <= 2 and base_rank == 1:
+        status, detail = "amber", f"Winner rank shifts from {base_rank} to {alt_rank} under Min-max normalisation"
+    else:
+        status, detail = "red", f"Winner rank changes from {base_rank} to {alt_rank} under Min-max normalisation"
+    return {
+        "id": "normalisation", "name": "Normalisation sensitivity",
+        "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+    }
+
+
+def _assess_bootstrap(winner_idx, l3_cats, methods, sel_wm, n_iter=300, unc_pct=10):
+    rng = np.random.default_rng(42)
+    multi = len(methods) > 1
+    rank1_count = 0
+    for _ in range(n_iter):
+        cat_scores_b = {}
+        for ckey in l3_cats:
+            raw, benefits = get_raw_matrix(ckey)
+            noise = rng.uniform(1 - unc_pct / 100, 1 + unc_pct / 100, size=raw.shape)
+            raw_b = np.maximum(raw * noise, 1e-9)
+            nm_b = np.zeros_like(raw_b)
+            n2_b = np.zeros_like(raw_b)
+            for j in range(raw.shape[0]):
+                nm_b[j] = merec_norm(raw_b[j], benefits[j])
+                n2_b[j] = n2_norm(raw_b[j], benefits[j])
+            w_ind_b = merec_weights(nm_b)
+            cat_scores_b[ckey] = (n2_b * w_ind_b[:, None]).sum(axis=0)
+        mat_b = np.array([cat_scores_b[c] for c in l3_cats])
+        w_rcw_b = get_category_weights(mat_b, sel_wm)
+        wm_b = mat_b * w_rcw_b[:, None]
+        ranks_b = run_mcdm_suite(wm_b, w_rcw_b, methods)
+        if multi:
+            psi_ranks = rank_with_ties(calc_psi(ranks_b, methods, 0.5), ascending=False)
+        else:
+            psi_ranks = ranks_b[methods[0]]
+        if int(psi_ranks[winner_idx]) == 1:
+            rank1_count += 1
+    pct = rank1_count / n_iter * 100
+    status = _status_from_rank1_pct(pct)
+    detail = f"Winner holds Rank 1 in {pct:.1f}% of {n_iter} bootstrap iterations (±{unc_pct}% noise)"
+    return {
+        "id": "bootstrap", "name": "Bootstrap stability (MEREC and RCW)",
+        "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+    }
+
+
+def _assess_indicator_uncertainty(winner_idx, l3_cats, methods, sel_wm, n_iter=300, unc_pct=10):
+    multi = len(methods) > 1
+    rng = np.random.default_rng(42)
+    rank1_count = 0
+    valid = 0
+    for _ in range(n_iter):
+        psi_b, ranks_b = _indicator_uncertainty_psi(
+            l3_cats, sel_wm, methods, multi, 0.5,
+            rng=rng, unc_pct=unc_pct, perturb=True,
+        )
+        if not np.all(np.isfinite(psi_b)):
+            continue
+        valid += 1
+        if multi:
+            psi_ranks = rank_with_ties(psi_b, ascending=False)
+        else:
+            psi_ranks = ranks_b[methods[0]]
+        if int(psi_ranks[winner_idx]) == 1:
+            rank1_count += 1
+    if valid == 0:
+        return {
+            "id": "indicator_unc", "name": "Indicator-level uncertainty propagation",
+            "status": "red", "detail": "Uncertainty propagation produced no valid iterations",
+            "status_label": TRAFFIC_LABELS["red"],
+        }
+    pct = rank1_count / valid * 100
+    status = _status_from_rank1_pct(pct)
+    detail = f"Winner holds Rank 1 in {pct:.1f}% of {valid} valid iterations (±{unc_pct}% indicator noise)"
+    return {
+        "id": "indicator_unc", "name": "Indicator-level uncertainty propagation",
+        "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+    }
+
+
+def _build_dashboard_summary(checks, winner_name):
+    scored = [c for c in checks if c["status"] != "na"]
+    robust = [c for c in scored if c["status"] == "green"]
+    partial = [c for c in scored if c["status"] == "amber"]
+    sensitive = [c for c in scored if c["status"] == "red"]
+    n_scored = len(scored)
+    n_robust = len(robust)
+
+    parts = [
+        f"The recommendation for **{winner_name}** is robust to "
+        f"**{n_robust} of {n_scored}** analyses."
+    ]
+    if sensitive:
+        names = ", ".join(c["name"].lower() for c in sensitive)
+        parts.append(f"It is sensitive to **{names}**.")
+    elif partial:
+        names = ", ".join(c["name"].lower() for c in partial)
+        parts.append(f"It is partially sensitive to **{names}**.")
+    else:
+        parts.append("No material sensitivity was detected across the validation suite.")
+    return " ".join(parts)
+
+
+def _overall_dashboard_status(checks):
+    scored = [c for c in checks if c["status"] != "na"]
+    if not scored:
+        return "na"
+    reds = sum(1 for c in scored if c["status"] == "red")
+    ambers = sum(1 for c in scored if c["status"] == "amber")
+    greens = sum(1 for c in scored if c["status"] == "green")
+    if reds >= 2 or (reds >= 1 and greens <= len(scored) // 2):
+        return "red"
+    if reds >= 1 or ambers >= 2:
+        return "amber"
+    if ambers >= 1:
+        return "amber"
+    return "green"
+
+
+def compute_sensitivity_dashboard(force=False):
+    cache_key = "validation_dashboard_results"
+    if not force and cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    method_ranks = st.session_state.last_method_ranks
+    names = st.session_state.proc_names
+    methods = list(st.session_state.sel_mcdm_methods) or list(method_ranks.keys())
+    l3_cats = ordered_l3_cats()
+    cat_scores = st.session_state.cat_scores
+    sel_wm = st.session_state.sel_weight_methods
+    final_w = st.session_state.final_cat_weights
+
+    winner_info = _resolve_overall_winner(names, method_ranks, methods)
+    wi = winner_info["winner_idx"]
+
+    checks = [
+        _assess_weight_sensitivity(wi, l3_cats, cat_scores, methods),
+        _assess_bc_sensitivity(wi, l3_cats, methods, method_ranks, sel_wm),
+        _assess_monte_carlo(wi, l3_cats, cat_scores, methods, final_w),
+        _assess_rank_reversal(wi, l3_cats, methods, method_ranks, sel_wm, names),
+        _assess_normalisation(wi, l3_cats, methods, method_ranks, sel_wm),
+        _assess_bootstrap(wi, l3_cats, methods, sel_wm),
+        _assess_indicator_uncertainty(wi, l3_cats, methods, sel_wm),
+    ]
+
+    overall = _overall_dashboard_status(checks)
+    summary = _build_dashboard_summary(checks, winner_info["winner_name"])
+    scored = [c for c in checks if c["status"] != "na"]
+    result = {
+        "checks": checks,
+        "winner_name": winner_info["winner_name"],
+        "winner_basis": winner_info["basis_label"],
+        "robust_count": sum(1 for c in scored if c["status"] == "green"),
+        "scored_count": len(scored),
+        "overall_status": overall,
+        "overall_label": TRAFFIC_LABELS[overall],
+        "summary": summary,
+    }
+    st.session_state[cache_key] = result
+    st.session_state.validation_choice = "Sensitivity dashboard"
+    return result
+
+
 def validation_intro():
     st.header("Step 13 - Validation (optional)")
 
-    choice = st.radio(
-        "Choose a validation method",
-        [
-            "None - skip validation",
-            "1. Weighting-method sensitivity",
-            "2. Benefit/Cost indicator sensitivity",
-            "3. Monte Carlo uncertainty (Dirichlet)",
-            "4. Rank-reversal test",
-            "5. Normalisation sensitivity",
-            "6. Bootstrap stability (MEREC and RCW)",
-            "7. Indicator-level uncertainty propagation",
-        ],
-        index=0, key="validation_radio",
-    )
-    st.session_state.validation_choice = choice
+    method_ranks = st.session_state.get("last_method_ranks")
+    if not method_ranks:
+        st.warning("Complete Step 12 first to generate rankings before running validation.")
+        st.divider()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("<- Back to results"):
+                st.session_state.step = 12
+                st.rerun()
+        with c2:
+            if st.button("Decision support ->", type="primary"):
+                st.session_state.step = 15
+                st.rerun()
+        with c3:
+            if st.button("Reset all"):
+                reset_all()
+                st.rerun()
+        return
 
-    if choice.startswith("1."):
+    c_refresh, c_info = st.columns([1, 3])
+    with c_refresh:
+        force = st.button("Refresh dashboard", type="primary", key="val_dash_refresh")
+    with c_info:
+        st.caption(
+            "All seven validation checks run automatically and focus on the "
+            "recommended winner from Step 12."
+        )
+
+    with st.spinner("Running sensitivity dashboard..."):
+        dashboard = compute_sensitivity_dashboard(force=force)
+
+    overall = dashboard["overall_status"]
+    st.markdown(
+        f"<span class='prism-traffic-badge prism-traffic-{overall}'>"
+        f"Overall recommendation: {dashboard['overall_label']}</span>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<div class='prism-about-panel'>"
+        f"<p class='prism-about-body'>{dashboard['summary']}</p>"
+        f"<p class='prism-about-body' style='margin-top:8px;color:{_BRAND_MUTED};'>"
+        f"Recommended alternative: <strong>{dashboard['winner_name']}</strong> "
+        f"({dashboard['winner_basis']})</p></div>",
+        unsafe_allow_html=True,
+    )
+
+    table_rows = [
+        {
+            "Analysis": c["name"],
+            "Status": c["status_label"],
+            "Finding": c["detail"],
+        }
+        for c in dashboard["checks"]
+    ]
+    st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("##### Detailed validation views")
+    with st.expander("1. Weighting-method sensitivity"):
         validation_weight_sensitivity()
-    elif choice.startswith("2."):
+    with st.expander("2. Benefit/Cost indicator sensitivity"):
         validation_bc_sensitivity()
-    elif choice.startswith("3."):
+    with st.expander("3. Monte Carlo uncertainty (Dirichlet)"):
         validation_monte_carlo()
-    elif choice.startswith("4."):
+    with st.expander("4. Rank-reversal test"):
         validation_rank_reversal()
-    elif choice.startswith("5."):
+    with st.expander("5. Normalisation sensitivity"):
         validation_normalisation_sensitivity()
-    elif choice.startswith("6."):
+    with st.expander("6. Bootstrap stability (MEREC and RCW)"):
         validation_bootstrap_merec_rcw()
-    elif choice.startswith("7."):
+    with st.expander("7. Indicator-level uncertainty propagation"):
         validation_indicator_uncertainty()
 
     st.divider()
