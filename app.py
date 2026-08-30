@@ -1852,6 +1852,8 @@ with st.sidebar:
     )
     st.divider()
 
+    step = st.session_state.step
+
     st.markdown(
         f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
         f"text-transform:uppercase;letter-spacing:0.06em;"
@@ -1876,7 +1878,6 @@ with st.sidebar:
         "Decision Support": [15],
     }
 
-    step = st.session_state.step
     total_steps = len(STEP_LABELS)
     if step < 0:
         st.caption("Documentation")
