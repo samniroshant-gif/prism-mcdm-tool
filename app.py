@@ -2059,34 +2059,87 @@ def step7():
             st.rerun()
 
 
+def _step8_category_radar_figure(names, cat_keys, cat_scores):
+    """Build a Plotly radar chart: categories as axes, alternatives as traces."""
+    theta = [CATS[c]["label"] for c in cat_keys]
+    theta_closed = theta + [theta[0]]
+    max_r = max(
+        float(cat_scores[c][pi])
+        for c in cat_keys
+        for pi in range(len(names))
+    ) or 1.0
+
+    fig = go.Figure()
+    for pi, name in enumerate(names):
+        r = [float(cat_scores[c][pi]) for c in cat_keys]
+        r_closed = r + [r[0]]
+        color = PROC_COLORS[pi % len(PROC_COLORS)]
+        hex_c = color.lstrip("#")
+        rv, gv, bv = (int(hex_c[i:i + 2], 16) for i in (0, 2, 4))
+        fig.add_trace(go.Scatterpolar(
+            r=r_closed,
+            theta=theta_closed,
+            fill="toself",
+            name=name,
+            line=dict(color=color, width=2),
+            fillcolor=f"rgba({rv},{gv},{bv},0.15)",
+        ))
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, max_r * 1.05],
+                tickfont=dict(size=9, family="Times New Roman"),
+                gridcolor="rgba(0,0,0,0.1)",
+            ),
+            angularaxis=dict(tickfont=dict(size=10, family="Times New Roman")),
+        ),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.05,
+            font=dict(family="Times New Roman"),
+        ),
+        height=480,
+        margin=dict(l=60, r=60, t=60, b=40),
+        paper_bgcolor="white",
+        font=dict(family="Times New Roman", color="#0D2B5E"),
+        hoverlabel=dict(font_family="Times New Roman"),
+    )
+    return fig
+
+
 def step8():
     st.header("Step 8 - Category scores")
 
     names = st.session_state.proc_names
-    for ckey in ordered_sel_cats():
+    cat_keys = ordered_sel_cats()
+    cat_scores = st.session_state.cat_scores
+
+    if len(cat_keys) == 1:
+        ckey = cat_keys[0]
         cat = CATS[ckey]
-        scores = st.session_state.cat_scores[ckey]
-
-        st.markdown(
-            f"<span style='background:{cat['bg']};color:{cat['color']};"
-            f"padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600;"
-            f"font-family:Times New Roman,Tinos,Times,serif;'>"
-            f"{cat['label']}</span>", unsafe_allow_html=True,
-        )
-
+        scores = cat_scores[ckey]
         apply_mpl_style()
         shorts = proc_short_labels(names)
         fig, ax = plt.subplots(figsize=(6, max(1.2, 0.45 * len(names))))
-        bars = ax.barh(shorts, scores, color=cat["color"], edgecolor="white")
+        ax.barh(shorts, scores, color=cat["color"], edgecolor="white")
         ax.set_xlim(0, max(scores) * 1.05)
         ax.tick_params(axis="both", labelsize=9)
         plt.tight_layout()
         mpl_show(fig)
-        # Values in table
-        score_rows = [{"Alternative": n, "Category score": round(float(s), 4)}
-                      for n, s in zip(names, scores)]
-        st.dataframe(pd.DataFrame(score_rows), use_container_width=True,
-                     hide_index=True)
+    else:
+        st.plotly_chart(
+            _step8_category_radar_figure(names, cat_keys, cat_scores),
+            use_container_width=True,
+        )
+
+    score_rows = []
+    for pi, name in enumerate(names):
+        row = {"Alternative": name}
+        for ckey in cat_keys:
+            row[CATS[ckey]["label"]] = round(float(cat_scores[ckey][pi]), 4)
+        score_rows.append(row)
+    st.dataframe(pd.DataFrame(score_rows), use_container_width=True,
+                 hide_index=True)
 
     st.divider()
     c1, c2 = st.columns(2)
