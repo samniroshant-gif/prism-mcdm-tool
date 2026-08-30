@@ -430,6 +430,104 @@ footer {{visibility: hidden;}}
     border-radius: 4px;
     margin: 3px 6px 3px 0;
 }}
+.prism-framework {{
+    margin: 8px 0 24px 0;
+}}
+.prism-framework-heading {{
+    color: {_BRAND_NAVY};
+    font-family: {_FONT_CSS};
+    font-size: 11pt;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 14px 0;
+}}
+.prism-framework-level {{
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 10px;
+    border: 1px solid {_BRAND_BORDER};
+}}
+.prism-framework-level.level-01 {{ background: #E6F1FB; }}
+.prism-framework-level.level-02 {{ background: #E1F5EE; }}
+.prism-framework-level.level-03 {{ background: #FAEEDA; }}
+.prism-framework-level-title {{
+    color: {_BRAND_NAVY};
+    font-family: {_FONT_CSS};
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+}}
+.prism-framework-row {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    justify-content: center;
+}}
+.prism-framework-box {{
+    background: {_BRAND_CARD};
+    border: 1px solid {_BRAND_BORDER};
+    border-radius: 6px;
+    padding: 10px 12px;
+    flex: 1 1 140px;
+    max-width: 220px;
+    min-width: 120px;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(13,43,94,0.05);
+}}
+.prism-framework-box.wide {{
+    flex: 2 1 260px;
+    max-width: 340px;
+}}
+.prism-framework-box.dashed {{
+    border-style: dashed;
+    background: rgba(255,255,255,0.65);
+}}
+.prism-framework-box strong {{
+    display: block;
+    color: {_BRAND_NAVY};
+    font-family: {_FONT_CSS};
+    font-size: 10pt;
+    font-weight: 600;
+    line-height: 1.3;
+    margin-bottom: 4px;
+}}
+.prism-framework-box span.sub {{
+    display: block;
+    color: {_BRAND_SLATE};
+    font-family: {_FONT_CSS};
+    font-size: 8.5pt;
+    line-height: 1.45;
+}}
+.prism-framework-arrow {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: {_BRAND_MUTED};
+    font-size: 14pt;
+    font-weight: 700;
+    min-width: 20px;
+}}
+.prism-framework-flow {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 10px;
+}}
+.prism-framework-side {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(13,43,94,0.15);
+}}
 .prism-step-row {{
     display: flex;
     align-items: center;
@@ -1445,6 +1543,83 @@ def landing_page():
         )
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    st.markdown(
+        "<div class='prism-framework'>"
+        "<p class='prism-framework-heading'>PRISM framework architecture</p>"
+        "<div class='prism-framework-level level-01'>"
+        "<div class='prism-framework-level-title'>Level 01 — System definition</div>"
+        "<div class='prism-framework-row'>"
+        "<div class='prism-framework-box wide'>"
+        "<strong>Define goal and scope</strong>"
+        "<span class='sub'>Manufacturing routes, materials, end-use applications, "
+        "system boundaries, functional units</span></div>"
+        "<div class='prism-framework-arrow'>&#8596;</div>"
+        "<div class='prism-framework-box wide'>"
+        "<strong>Define indicators</strong>"
+        "<span class='sub'>Alternatives, categories, and sustainability criteria</span>"
+        "</div></div></div>"
+        "<div class='prism-framework-level level-02'>"
+        "<div class='prism-framework-level-title'>Level 02 — Indicator processing</div>"
+        "<div class='prism-framework-flow'>"
+        "<div class='prism-framework-box'>"
+        "<strong>Decision matrix</strong>"
+        "<span class='sub'>Environmental, economic, social, quality, productivity</span>"
+        "</div><div class='prism-framework-arrow'>&#8594;</div>"
+        "<div class='prism-framework-box'>"
+        "<strong>Normalisation</strong>"
+        "<span class='sub'>Linear sum-based (N2)</span></div>"
+        "<div class='prism-framework-arrow'>&#8594;</div>"
+        "<div class='prism-framework-box'>"
+        "<strong>Intra-category weighting</strong>"
+        "<span class='sub'>MEREC weights</span></div>"
+        "<div class='prism-framework-arrow'>&#8594;</div>"
+        "<div class='prism-framework-box'>"
+        "<strong>Category scores</strong>"
+        "<span class='sub'>&Sigma; MEREC weights &times; normalisation</span>"
+        "</div></div>"
+        "<div class='prism-framework-side'>"
+        "<div class='prism-framework-box dashed'>"
+        "<strong>Data quality assessment</strong></div>"
+        "<div class='prism-framework-box dashed'>"
+        "<strong>Correlation analysis</strong></div>"
+        "<div class='prism-framework-box dashed'>"
+        "<strong>Category selection for Level 03</strong></div>"
+        "</div></div>"
+        "<div class='prism-framework-level level-03'>"
+        "<div class='prism-framework-level-title'>Level 03 — Decision aggregation</div>"
+        "<div class='prism-framework-flow'>"
+        "<div class='prism-framework-box'>"
+        "<strong>Inter-category weighting</strong>"
+        "<span class='sub'>Equal, entropy, CRITIC</span></div>"
+        "<div class='prism-framework-arrow'>&#8594;</div>"
+        "<div class='prism-framework-box'>"
+        "<strong>Weight consolidation</strong>"
+        "<span class='sub'>Reciprocal composite weighting (RCW)</span></div>"
+        "<div class='prism-framework-arrow'>&#8594;</div>"
+        "<div class='prism-framework-box'>"
+        "<strong>MCDM aggregation</strong>"
+        "<span class='sub'>TOPSIS, VIKOR, ELECTRE-Score, MULTIMOORA, WASPAS</span>"
+        "</div><div class='prism-framework-arrow'>&#8594;</div>"
+        "<div class='prism-framework-box'>"
+        "<strong>Compromise ranking</strong>"
+        "<span class='sub'>Performance stability index (PSI)</span></div>"
+        "</div>"
+        "<div class='prism-framework-side'>"
+        "<div class='prism-framework-box dashed'>"
+        "<strong>Sensitivity and uncertainty analysis</strong>"
+        "<span class='sub'>Weighting, normalisation, bootstrap, MCDM, rank reversal</span>"
+        "</div>"
+        "<div class='prism-framework-box dashed'>"
+        "<strong>Category combination generation</strong>"
+        "<span class='sub'>2<sup>n</sup>&nbsp;&minus;&nbsp;1 stakeholder combinations</span>"
+        "</div>"
+        "<div class='prism-framework-box dashed'>"
+        "<strong>Decision support analytics</strong>"
+        "<span class='sub'>Contribution, leave-one-out, simulation</span>"
+        "</div></div></div></div>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
         f"<p style='font-size:11pt;font-weight:600;color:{_BRAND_NAVY};"
