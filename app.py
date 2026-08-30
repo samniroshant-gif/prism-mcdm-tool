@@ -390,6 +390,73 @@ footer {{visibility: hidden;}}
     border-radius: 4px;
     margin-top: 6px;
 }}
+.prism-step-row {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 3px 0;
+    padding: 2px 0;
+}}
+.prism-step-row.current {{
+    background: #E8EEF7;
+    border-radius: 6px;
+    border-left: 3px solid {_BRAND_NAVY};
+    padding: 6px 10px;
+    margin: 2px 0;
+}}
+.prism-step-check {{
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 2px solid #CBD5E0;
+    box-sizing: border-box;
+}}
+.prism-step-check.done {{
+    background: #16A34A;
+    border-color: #16A34A;
+    position: relative;
+}}
+.prism-step-check.done::after {{
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 4px;
+    height: 8px;
+    border: solid #FFFFFF;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}}
+.prism-step-check.current {{
+    border-color: {_BRAND_NAVY};
+    background: {_BRAND_NAVY};
+    box-shadow: inset 0 0 0 3px #E8EEF7;
+}}
+.prism-step-check.pending {{
+    background: #FFFFFF;
+    border-color: #CBD5E0;
+}}
+.prism-step-label {{
+    font-size: 10pt;
+    line-height: 1.3;
+    font-family: {_FONT_CSS};
+}}
+.prism-step-label.done {{
+    color: #1A202C;
+}}
+.prism-step-label.current {{
+    color: {_BRAND_NAVY};
+    font-weight: 600;
+}}
+.prism-step-label.pending {{
+    color: #9CA3AF;
+}}
+.prism-section-head {{
+    border-bottom: 1px solid {_BRAND_BORDER};
+    padding-bottom: 4px;
+    margin-bottom: 6px !important;
+}}
 
 /* ── Divider ── */
 hr {{
@@ -1225,10 +1292,15 @@ with st.sidebar:
     }
 
     step = st.session_state.step
+    total_steps = len(STEP_LABELS)
+    pct = min(step, total_steps) / total_steps if total_steps else 0
+    st.progress(pct)
+    st.caption(f"Step {min(step, total_steps)} of {total_steps}")
+
     for section, steps in SECTIONS.items():
         st.markdown(
-            f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
-            f"text-transform:uppercase;letter-spacing:0.06em;"
+            f"<p class='prism-section-head' style='font-size:10pt;font-weight:600;"
+            f"color:{_BRAND_NAVY};text-transform:uppercase;letter-spacing:0.06em;"
             f"font-family:{_FONT_CSS};margin:10px 0 4px 0;'>{section}</p>",
             unsafe_allow_html=True,
         )
@@ -1238,26 +1310,23 @@ with st.sidebar:
             label = STEP_LABELS[s - 1]
             short = label.split(". ", 1)[1] if ". " in label else label
             if s < step:
-                st.markdown(
-                    f"<p style='font-size:10pt;color:#16A34A;margin:2px 0;"
-                    f"font-family:{_FONT_CSS};padding-left:4px;'>"
-                    f"<span style='font-weight:600;'>Done</span> &mdash; {short}</p>",
-                    unsafe_allow_html=True,
-                )
+                row_cls = "prism-step-row"
+                check_cls = "prism-step-check done"
+                label_cls = "prism-step-label done"
             elif s == step:
-                st.markdown(
-                    f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
-                    f"background:#E8EEF7;padding:6px 10px;border-radius:6px;"
-                    f"border-left:3px solid {_BRAND_NAVY};margin:2px 0;"
-                    f"font-family:{_FONT_CSS};'>{short}</p>",
-                    unsafe_allow_html=True,
-                )
+                row_cls = "prism-step-row current"
+                check_cls = "prism-step-check current"
+                label_cls = "prism-step-label current"
             else:
-                st.markdown(
-                    f"<p style='font-size:10pt;color:#9CA3AF;margin:2px 0;"
-                    f"font-family:{_FONT_CSS};padding-left:4px;'>{short}</p>",
-                    unsafe_allow_html=True,
-                )
+                row_cls = "prism-step-row"
+                check_cls = "prism-step-check pending"
+                label_cls = "prism-step-label pending"
+            st.markdown(
+                f"<div class='{row_cls}'>"
+                f"<span class='{check_cls}'></span>"
+                f"<span class='{label_cls}'>{short}</span></div>",
+                unsafe_allow_html=True,
+            )
 
     st.divider()
 
