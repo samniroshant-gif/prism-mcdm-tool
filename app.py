@@ -400,18 +400,6 @@ footer {{visibility: hidden;}}
     margin-bottom: 8px;
     box-shadow: 0 2px 8px rgba(13,43,94,0.06);
 }}
-.prism-about-badge {{
-    display: inline-block;
-    background: #E8EEF7;
-    color: {_BRAND_NAVY};
-    font-size: 9pt;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 4px 12px;
-    border-radius: 4px;
-    margin-bottom: 14px;
-}}
 .prism-about-title {{
     color: {_BRAND_NAVY};
     font-family: {_FONT_CSS};
@@ -441,15 +429,6 @@ footer {{visibility: hidden;}}
     padding: 4px 11px;
     border-radius: 4px;
     margin: 3px 6px 3px 0;
-}}
-.prism-about-footnote {{
-    color: {_BRAND_MUTED};
-    font-family: {_FONT_CSS};
-    font-size: 9.5pt;
-    line-height: 1.6;
-    margin: 18px 0 0 0;
-    padding-top: 14px;
-    border-top: 1px solid {_BRAND_BORDER};
 }}
 .prism-step-row {{
     display: flex;
@@ -1494,7 +1473,6 @@ def landing_page():
 
     st.markdown(
         "<div class='prism-about-panel'>"
-        "<span class='prism-about-badge'>Doctoral research tool</span>"
         "<h3 class='prism-about-title'>About PRISM</h3>"
         "<p class='prism-about-body'>"
         "PRISM is an integrated multi-criteria decision-making framework "
@@ -1518,11 +1496,6 @@ def landing_page():
         "<p class='prism-about-body'>"
         "An integrated validation and analytics layer provides robustness "
         "evidence to support rigorous, evidence-based decision-making."
-        "</p>"
-        "<p class='prism-about-footnote'>"
-        "Developed at Cranfield University as part of doctoral research in "
-        "manufacturing sustainability assessment and multi-criteria decision "
-        "analysis."
         "</p>"
         "</div>",
         unsafe_allow_html=True,
