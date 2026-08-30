@@ -1595,14 +1595,13 @@ METHOD_DESCRIPTIONS = [
 
 
 def _render_method_descriptions_panel():
-    """Render method descriptions as a professional table panel."""
+    """Render method descriptions table (intro + dataframe)."""
     st.markdown(
-        "<div class='prism-about-panel'>"
-        "<h3 class='prism-about-title'>Method descriptions</h3>"
-        "<p class='prism-about-body'>"
+        "<p class='prism-about-body' style='font-family:Inter,sans-serif;"
+        "font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:16px;'>"
         "Plain-language summary of each method used in PRISM — what it does and "
         "where it fits in the assessment workflow."
-        "</p></div>",
+        "</p>",
         unsafe_allow_html=True,
     )
     st.dataframe(
@@ -1610,6 +1609,15 @@ def _render_method_descriptions_panel():
         use_container_width=True,
         hide_index=True,
     )
+
+
+def method_descriptions_page():
+    st.header("Method descriptions")
+    _render_method_descriptions_panel()
+
+    if st.button("Back to home", type="primary", key="md_back_home"):
+        st.session_state.step = 0
+        st.rerun()
 
 
 def how_to_use_page():
@@ -1892,6 +1900,9 @@ with st.sidebar:
     if st.button("How to use", use_container_width=True, key="sidebar_how_to_use"):
         st.session_state.step = -1
         st.rerun()
+    if st.button("Method descriptions", use_container_width=True, key="sidebar_method_descriptions"):
+        st.session_state.step = -2
+        st.rerun()
     if step != 0 and st.button("Home", use_container_width=True, key="sidebar_home"):
         st.session_state.step = 0
         st.rerun()
@@ -2165,7 +2176,6 @@ def landing_page():
     )
 
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-    _render_method_descriptions_panel()
 
     st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -6069,6 +6079,7 @@ def step15():
 
 
 STEPS = {
+    -2: method_descriptions_page,
     -1: how_to_use_page,
     0: landing_page, 1: step1, 2: step2, 3: step3, 4: step4, 5: step5, 6: step6,
     7: step7, 8: step8, 9: step9, 10: step10, 11: step11, 12: step12,
