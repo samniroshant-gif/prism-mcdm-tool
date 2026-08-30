@@ -1069,6 +1069,296 @@ def get_combinations(cats_list):
     return [list(c) for c in combos]
 
 
+def _compute_combo_rank_grid(l3_cats, cat_scores, methods, combo_p=0.5):
+    """Recompute category-combination rank grid (same logic as Step 12)."""
+    combos = get_combinations(l3_cats)
+    n_proc = st.session_state.n_proc
+    rank_grid = np.zeros((n_proc, len(combos)), dtype=int)
+    cat_initial = {c: CAT_SHORT.get(c, CATS[c]["label"][:1]) for c in l3_cats}
+    combo_labels = ["+".join(cat_initial[c] for c in combo) for combo in combos]
+    weight_methods = st.session_state.sel_weight_methods
+    for ci, combo in enumerate(combos):
+        if len(combo) == 1:
+            rank_grid[:, ci] = rank_with_ties(cat_scores[combo[0]], ascending=False)
+        else:
+            sub_mat = np.array([cat_scores[c] for c in combo])
+            sub_w = get_category_weights(sub_mat, weight_methods)
+            sub_weighted = sub_mat * sub_w[:, None]
+            sub_ranks = run_mcdm_suite(sub_weighted, sub_w, methods)
+            psi_combo = calc_psi(sub_ranks, methods, combo_p)
+            rank_grid[:, ci] = rank_with_ties(psi_combo, ascending=False)
+    return rank_grid, combo_labels
+
+
+def _resolve_overall_winner(names, method_ranks, methods):
+    """Determine overall winner from PSI, PSI-combo, or single MCDM method."""
+    ss = st.session_state
+    combo_ranks = ss.get("last_psi_combo_ranks")
+    if combo_ranks is not None:
+        combo_ranks = np.array(combo_ranks, dtype=int)
+        min_r = combo_ranks.min()
+        leaders = np.where(combo_ranks == min_r)[0]
+        if len(leaders) == 1:
+            wi = int(leaders[0])
+            combo_scores = ss.get("last_psi_combo_scores")
+            psi_score = float(combo_scores[wi]) if combo_scores else None
+            return {
+                "winner_idx": wi,
+                "winner_name": names[wi],
+                "basis_label": "PSI-combo tie-breaker (p=0.50)",
+                "is_tied": False,
+                "tied_names": [],
+                "psi_score": psi_score,
+                "psi_ranks": combo_ranks,
+                "psi_scores": np.array(combo_scores, dtype=float) if combo_scores else None,
+            }
+
+    if len(methods) > 1:
+        psi_scores = ss.get("last_psi_scores")
+        psi = np.array(psi_scores, dtype=float) if psi_scores is not None else calc_psi(method_ranks, methods, 0.5)
+        psi_ranks = rank_with_ties(psi, ascending=False)
+        min_r = psi_ranks.min()
+        leaders = np.where(psi_ranks == min_r)[0]
+        wi = int(leaders[0])
+        return {
+            "winner_idx": wi,
+            "winner_name": names[wi],
+            "basis_label": "PSI compromise rank (p=0.50)",
+            "is_tied": len(leaders) > 1,
+            "tied_names": [names[i] for i in leaders],
+            "psi_score": float(psi[wi]),
+            "psi_ranks": psi_ranks,
+            "psi_scores": psi,
+        }
+
+    m = methods[0]
+    ranks = method_ranks[m]
+    min_r = ranks.min()
+    leaders = np.where(ranks == min_r)[0]
+    wi = int(leaders[0])
+    return {
+        "winner_idx": wi,
+        "winner_name": names[wi],
+        "basis_label": f"{METHOD_LABELS[m]} rank",
+        "is_tied": len(leaders) > 1,
+        "tied_names": [names[i] for i in leaders],
+        "psi_score": None,
+        "psi_ranks": None,
+        "psi_scores": None,
+    }
+
+
+def _build_decision_support_tables(winner_info):
+    """Build summary, strengths, weaknesses, and category profile tables."""
+    names = st.session_state.proc_names
+    n_proc = len(names)
+    wi = winner_info["winner_idx"]
+    method_ranks = st.session_state.last_method_ranks
+    methods = list(st.session_state.sel_mcdm_methods) or list(method_ranks.keys())
+    l3_cats = ordered_l3_cats()
+    cat_scores = st.session_state.cat_scores
+
+    summary_rows = [
+        {"Field": "Recommended alternative", "Value": winner_info["winner_name"]},
+        {"Field": "Decision basis", "Value": winner_info["basis_label"]},
+    ]
+    if winner_info.get("is_tied"):
+        summary_rows.append({
+            "Field": "Tie note",
+            "Value": f"Tied with: {', '.join(winner_info.get('tied_names', []))}",
+        })
+    if winner_info.get("psi_score") is not None:
+        summary_rows.append({
+            "Field": "PSI score",
+            "Value": round(winner_info["psi_score"], 4),
+        })
+
+    if winner_info.get("psi_scores") is not None:
+        psi = winner_info["psi_scores"]
+        for idx in np.argsort(-psi):
+            if int(idx) != wi:
+                runner_idx = int(idx)
+                margin = float(psi[wi] - psi[runner_idx])
+                summary_rows.append({
+                    "Field": "Runner-up",
+                    "Value": f"{names[runner_idx]} (PSI margin {margin:.4f})",
+                })
+                break
+    elif len(methods) == 1:
+        ranks = method_ranks[methods[0]]
+        for pi in np.argsort(ranks):
+            if int(pi) != wi:
+                summary_rows.append({"Field": "Runner-up", "Value": names[int(pi)]})
+                break
+
+    strengths, weaknesses, profile_rows = [], [], []
+
+    if len(methods) > 1 and winner_info.get("psi_ranks") is not None:
+        pr = int(winner_info["psi_ranks"][wi])
+        if pr == 1 and not winner_info.get("is_tied"):
+            strengths.append({
+                "Evidence": "PSI compromise rank",
+                "Source": "Step 12",
+                "Result": "Rank 1",
+                "Interpretation": "Leading overall ranking",
+            })
+        elif winner_info.get("is_tied"):
+            strengths.append({
+                "Evidence": "PSI compromise rank",
+                "Source": "Step 12",
+                "Result": f"Tied rank 1 ({len(winner_info.get('tied_names', []))} alternatives)",
+                "Interpretation": "Shared top position — review tie-breaker evidence",
+            })
+            weaknesses.append({
+                "Area": "PSI compromise rank",
+                "Source": "Step 12",
+                "Result": "Tied at rank 1",
+                "Impact": "No unique overall winner on headline PSI",
+            })
+        else:
+            weaknesses.append({
+                "Area": "PSI compromise rank",
+                "Source": "Step 12",
+                "Result": f"Rank {pr}",
+                "Impact": "Not the top PSI-ranked alternative",
+            })
+
+    for ckey in l3_cats:
+        scores = cat_scores[ckey]
+        cat_ranks = rank_with_ties(scores, ascending=False)
+        w_score = float(scores[wi])
+        w_rank = int(cat_ranks[wi])
+        best_idx = int(np.argmax(scores))
+        best_score = float(scores[best_idx])
+        label = CATS[ckey]["label"]
+        profile_rows.append({
+            "Category": label,
+            "Winner score": round(w_score, 4),
+            "Winner rank": w_rank,
+            "Best alternative": names[best_idx],
+            "Best score": round(best_score, 4),
+        })
+        if w_rank == 1 and best_idx == wi:
+            strengths.append({
+                "Evidence": f"{label} score",
+                "Source": "Step 8",
+                "Result": f"{w_score:.4f} (Rank 1 of {n_proc})",
+                "Interpretation": f"Strongest on {label.lower()}",
+            })
+        elif w_rank > 1:
+            weaknesses.append({
+                "Area": f"{label} category",
+                "Source": "Step 8",
+                "Result": f"Rank {w_rank} ({w_score:.4f} vs best {best_score:.4f})",
+                "Impact": f"Below best on {label.lower()}",
+            })
+
+    for m in methods:
+        r = int(method_ranks[m][wi])
+        if r == 1:
+            strengths.append({
+                "Evidence": f"{METHOD_LABELS[m]} rank",
+                "Source": "Step 12",
+                "Result": "Rank 1",
+                "Interpretation": "Top-ranked on this MCDM method",
+            })
+        else:
+            weaknesses.append({
+                "Area": METHOD_LABELS[m],
+                "Source": "Step 12",
+                "Result": f"Rank {r}",
+                "Impact": "Not top on all MCDM methods",
+            })
+
+    if l3_cats and methods:
+        rank_grid, combo_labels = _compute_combo_rank_grid(l3_cats, cat_scores, methods)
+        n_combos = len(combo_labels)
+        rank1_count = int(np.sum(rank_grid[wi, :] == 1))
+        if rank1_count > 0:
+            strengths.append({
+                "Evidence": "Category combinations",
+                "Source": "Step 12",
+                "Result": f"Rank 1 in {rank1_count} of {n_combos} combinations",
+                "Interpretation": "Robust across stakeholder category views",
+            })
+        bad_combos = [
+            (int(rank_grid[wi, ci]), combo_labels[ci])
+            for ci in range(n_combos)
+            if int(rank_grid[wi, ci]) > 1
+        ]
+        bad_combos.sort(key=lambda x: -x[0])
+        for r, lbl in bad_combos[:5]:
+            weaknesses.append({
+                "Area": f"{lbl} combo",
+                "Source": "Step 12",
+                "Result": f"Rank {r}",
+                "Impact": "Sensitive to this category subset",
+            })
+        if len(bad_combos) > 5:
+            weaknesses.append({
+                "Area": "Other combinations",
+                "Source": "Step 12",
+                "Result": f"{len(bad_combos) - 5} more combos with rank > 1",
+                "Impact": "See Step 12 combination chart for full profile",
+            })
+
+    mc_psi = st.session_state.get("mc_psi_rank_counts")
+    if mc_psi is not None:
+        n_iter = st.session_state.get("mc_n_iter", 1) or 1
+        pct_rank1 = 100.0 * mc_psi[wi, 0] / n_iter
+        if pct_rank1 >= 50:
+            strengths.append({
+                "Evidence": "Monte Carlo PSI stability",
+                "Source": "Step 13",
+                "Result": f"Rank 1 in {pct_rank1:.1f}% of draws",
+                "Interpretation": "Stable under weight uncertainty",
+            })
+        else:
+            weaknesses.append({
+                "Area": "Monte Carlo PSI stability",
+                "Source": "Step 13",
+                "Result": f"Rank 1 in only {pct_rank1:.1f}% of draws",
+                "Impact": "Ranking sensitive to weight uncertainty",
+            })
+
+    val_choice = st.session_state.get("validation_choice", "None - skip validation")
+    if val_choice and not val_choice.startswith("None"):
+        val_label = val_choice.split(". ", 1)[-1] if ". " in val_choice else val_choice
+        strengths.append({
+            "Evidence": "Validation reviewed",
+            "Source": "Step 13",
+            "Result": val_label,
+            "Interpretation": "Robustness check reviewed — see Step 13 for details",
+        })
+
+    aux_choice = st.session_state.get("auxiliary_radio", "None - skip")
+    if aux_choice and not aux_choice.startswith("None"):
+        aux_label = aux_choice.split(". ", 1)[-1] if ". " in aux_choice else aux_choice
+        strengths.append({
+            "Evidence": "Analytics reviewed",
+            "Source": "Step 14",
+            "Result": aux_label,
+            "Interpretation": "Supplementary analysis reviewed — see Step 14 for details",
+        })
+
+    if not strengths:
+        strengths.append({
+            "Evidence": "—",
+            "Source": "—",
+            "Result": "—",
+            "Interpretation": "No clear strength signals identified",
+        })
+    if not weaknesses:
+        weaknesses.append({
+            "Area": "—",
+            "Source": "—",
+            "Result": "—",
+            "Impact": "No material weaknesses detected across categories, methods, or combinations",
+        })
+
+    return summary_rows, strengths, weaknesses, profile_rows
+
+
 def compute_dirichlet_k(mat):
     k_cat = mat.shape[0]
     w_eq = np.full(k_cat, 1.0 / k_cat)
@@ -1179,7 +1469,7 @@ STEP_LABELS = [
     "5. Indicators", "6. Correlation check", "7. MEREC weights",
     "8. Category scores", "9. Level 3 categories", "10. Category weights",
     "11. MCDM methods", "12. Results", "13. Validation (optional)",
-    "14. Analytics (optional)",
+    "14. Analytics (optional)", "15. Decision support",
 ]
 
 
@@ -1422,6 +1712,7 @@ with st.sidebar:
         "Decision Aggregation": [9, 10, 11, 12],
         "Validation": [13],
         "Analytics": [14],
+        "Decision Support": [15],
     }
 
     step = st.session_state.step
@@ -2712,7 +3003,7 @@ def step12():
             st.session_state.pop("last_psi_combo_ranks", None)
 
     st.divider()
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         if st.button("<- Back"):
             st.session_state.step = 11
@@ -2726,6 +3017,10 @@ def step12():
             st.session_state.step = 14
             st.rerun()
     with c4:
+        if st.button("Decision support ->", type="primary"):
+            st.session_state.step = 15
+            st.rerun()
+    with c5:
         if st.button("Reset all"):
             reset_all()
             st.rerun()
@@ -3584,12 +3879,16 @@ def validation_intro():
         validation_indicator_uncertainty()
 
     st.divider()
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("<- Back to results"):
             st.session_state.step = 12
             st.rerun()
     with c2:
+        if st.button("Decision support ->", type="primary"):
+            st.session_state.step = 15
+            st.rerun()
+    with c3:
         if st.button("Reset all"):
             reset_all()
             st.rerun()
@@ -5045,7 +5344,7 @@ def auxiliary_intro():
         analytics_stakeholder_preference()
 
     st.divider()
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         if st.button("<- Back to validation"):
             st.session_state.step = 13
@@ -5055,16 +5354,75 @@ def auxiliary_intro():
             st.session_state.step = 12
             st.rerun()
     with c3:
+        if st.button("Decision support ->", type="primary"):
+            st.session_state.step = 15
+            st.rerun()
+    with c4:
         if st.button("Reset all"):
             reset_all()
             st.rerun()
 
 
 
+def step15():
+    st.header("Step 15 - Decision support")
+
+    method_ranks = st.session_state.get("last_method_ranks")
+    if not method_ranks:
+        st.warning("Complete Step 12 first to generate rankings and decision support.")
+        st.divider()
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("<- Back to results", key="ds_back_results_empty"):
+                st.session_state.step = 12
+                st.rerun()
+        with c2:
+            if st.button("Reset all", key="ds_reset_empty"):
+                reset_all()
+                st.rerun()
+        return
+
+    names = st.session_state.proc_names
+    methods = list(st.session_state.sel_mcdm_methods) or list(method_ranks.keys())
+    winner_info = _resolve_overall_winner(names, method_ranks, methods)
+    summary, strengths, weaknesses, profile = _build_decision_support_tables(winner_info)
+
+    st.subheader("Overall recommendation")
+    st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
+
+    st.subheader("Strengths — why the winner wins")
+    st.dataframe(pd.DataFrame(strengths), use_container_width=True, hide_index=True)
+
+    st.subheader("Weaknesses — where the winner fails")
+    st.dataframe(pd.DataFrame(weaknesses), use_container_width=True, hide_index=True)
+
+    st.subheader("Category score profile")
+    st.dataframe(pd.DataFrame(profile_rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        if st.button("<- Back to results", key="ds_back_results"):
+            st.session_state.step = 12
+            st.rerun()
+    with c2:
+        if st.button("<- Back to validation", key="ds_back_validation"):
+            st.session_state.step = 13
+            st.rerun()
+    with c3:
+        if st.button("<- Back to analytics", key="ds_back_analytics"):
+            st.session_state.step = 14
+            st.rerun()
+    with c4:
+        if st.button("Reset all", key="ds_reset"):
+            reset_all()
+            st.rerun()
+
+
 STEPS = {
     0: landing_page, 1: step1, 2: step2, 3: step3, 4: step4, 5: step5, 6: step6,
     7: step7, 8: step8, 9: step9, 10: step10, 11: step11, 12: step12,
-    13: validation_intro, 14: auxiliary_intro,
+    13: validation_intro, 14: auxiliary_intro, 15: step15,
 }
 
 STEPS[st.session_state.step]()
