@@ -1472,6 +1472,152 @@ STEP_LABELS = [
     "14. Analytics (optional)", "15. Decision support",
 ]
 
+HOW_TO_USE_STEPS = [
+    ("1–5", "Problem definition", "Name alternatives, select sustainability categories, configure indicators and units, then enter raw values in the decision matrix."),
+    ("6", "Correlation check", "Review within-category indicator correlations and acknowledge before proceeding."),
+    ("7–8", "Indicator processing", "Review MEREC weights, then inspect category scores (radar chart when multiple categories are selected)."),
+    ("9–11", "Decision aggregation", "Choose Level 3 categories, select inter-category weighting methods, then pick MCDM methods for ranking."),
+    ("12", "Results", "Compare MCDM rankings, PSI compromise scores, and category-combination sensitivity."),
+    ("13", "Validation (optional)", "Run robustness checks — weight sensitivity, normalisation, Monte Carlo, bootstrap, and more."),
+    ("14", "Analytics (optional)", "Contribution analysis, leave-one-out tests, and stakeholder preference simulation."),
+    ("15", "Decision support", "Review the recommended winner with structured strengths and weaknesses tables."),
+]
+
+METHOD_DESCRIPTIONS = [
+    {
+        "Method": "MEREC",
+        "Stage": "Indicator processing",
+        "Plain-language description": "Assigns importance to indicators within each category based on how much each indicator influences the ranking when it changes.",
+        "Role in PRISM": "Intra-category weighting — combines normalised indicators into a single category score.",
+    },
+    {
+        "Method": "N2 normalisation",
+        "Stage": "Indicator processing",
+        "Plain-language description": "Scales raw indicator values to a common 0–1 range so benefit and cost indicators can be compared fairly.",
+        "Role in PRISM": "Prepares the decision matrix before MEREC weighting and category scoring.",
+    },
+    {
+        "Method": "Equal weights",
+        "Stage": "Inter-category weighting",
+        "Plain-language description": "Treats every sustainability category as equally important.",
+        "Role in PRISM": "One of three objective methods used to derive category importance at Level 3.",
+    },
+    {
+        "Method": "Entropy weights",
+        "Stage": "Inter-category weighting",
+        "Plain-language description": "Gives more weight to categories where alternatives differ most — higher variation means higher influence.",
+        "Role in PRISM": "Objective weighting based on data dispersion across alternatives.",
+    },
+    {
+        "Method": "CRITIC",
+        "Stage": "Inter-category weighting",
+        "Plain-language description": "Balances contrast between alternatives with correlation structure — categories that are both distinct and non-redundant receive higher weight.",
+        "Role in PRISM": "Objective weighting that accounts for both contrast and inter-category correlation.",
+    },
+    {
+        "Method": "RCW",
+        "Stage": "Inter-category weighting",
+        "Plain-language description": "Reciprocal Composite Weighting — harmonises multiple weighting methods into one consolidated category-weight vector.",
+        "Role in PRISM": "Inter-category weighting and consolidation before MCDM aggregation.",
+    },
+    {
+        "Method": "TOPSIS",
+        "Stage": "MCDM aggregation",
+        "Plain-language description": "Ranks alternatives by their distance to an ideal best solution and an ideal worst solution.",
+        "Role in PRISM": "One of five MCDM methods whose ranks feed the PSI compromise index.",
+    },
+    {
+        "Method": "VIKOR",
+        "Stage": "MCDM aggregation",
+        "Plain-language description": "Seeks a compromise solution closest to the group utility while minimising regret from not choosing the best individual criterion.",
+        "Role in PRISM": "Provides a compromise-oriented ranking perspective for PSI.",
+    },
+    {
+        "Method": "ELECTRE-Score",
+        "Stage": "MCDM aggregation",
+        "Plain-language description": "Uses outranking logic to score how strongly one alternative dominates others across criteria.",
+        "Role in PRISM": "Adds an outranking-based view to the multi-method ensemble.",
+    },
+    {
+        "Method": "MULTIMOORA",
+        "Stage": "MCDM aggregation",
+        "Plain-language description": "Combines three reference-point approaches (ratio, reference, and full multiplicative forms) for a balanced ranking.",
+        "Role in PRISM": "Reference-point method contributing to rank diversity in PSI.",
+    },
+    {
+        "Method": "WASPAS",
+        "Stage": "MCDM aggregation",
+        "Plain-language description": "Weighted Aggregated Sum Product Assessment — blends weighted sum and weighted product models.",
+        "Role in PRISM": "Aggregated weighted model complementing the other MCDM techniques.",
+    },
+    {
+        "Method": "PSI",
+        "Stage": "Compromise ranking",
+        "Plain-language description": "Performance Stability Index — balances average rank (performance) with rank consistency (stability) across MCDM methods.",
+        "Role in PRISM": "Produces the final compromise ranking at p = 0.50 in Step 12.",
+    },
+    {
+        "Method": "PSI-combo",
+        "Stage": "Tie-breaker",
+        "Plain-language description": "Applies PSI a second time using ranks across all category combinations when the headline PSI ranking is tied at rank 1.",
+        "Role in PRISM": "Breaks ties when multiple alternatives share the top PSI rank.",
+    },
+]
+
+
+def _render_method_descriptions_panel():
+    """Render method descriptions as a professional table panel."""
+    st.markdown(
+        "<div class='prism-about-panel'>"
+        "<h3 class='prism-about-title'>Method descriptions</h3>"
+        "<p class='prism-about-body'>"
+        "Plain-language summary of each method used in PRISM — what it does and "
+        "where it fits in the assessment workflow."
+        "</p></div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(
+        pd.DataFrame(METHOD_DESCRIPTIONS),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def how_to_use_page():
+    st.header("How to use PRISM")
+
+    st.markdown(
+        "<p class='prism-about-body' style='font-family:Inter,sans-serif;"
+        "font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:16px;'>"
+        "Follow the guided workflow in the sidebar from Step 1 through Step 12 "
+        "for a complete assessment. Optional validation, analytics, and decision "
+        "support steps are available after results are generated."
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    guide_rows = [
+        {"Steps": s, "Phase": phase, "What to do": action}
+        for s, phase, action in HOW_TO_USE_STEPS
+    ]
+    st.dataframe(pd.DataFrame(guide_rows), use_container_width=True, hide_index=True)
+
+    st.markdown(
+        "<div class='prism-about-panel' style='margin-top:16px;'>"
+        "<h3 class='prism-about-title'>Tips</h3>"
+        "<p class='prism-about-body'>"
+        "Save indicator drafts in Step 5 if you need to navigate away. "
+        "Negative values in Step 5 are flagged for review. "
+        "Run at least one validation check before finalising a recommendation. "
+        "Use Step 15 Decision support for a structured winner summary."
+        "</p></div>",
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Back to home", type="primary", key="htu_back_home"):
+        st.session_state.step = 0
+        st.rerun()
+
 
 def build_excel_report():
     """Build a full Excel report from current session state."""
@@ -1706,6 +1852,21 @@ with st.sidebar:
     )
     st.divider()
 
+    st.markdown(
+        f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
+        f"text-transform:uppercase;letter-spacing:0.06em;"
+        f"font-family:{_FONT_CSS};margin:0 0 8px 0;'>Documentation</p>",
+        unsafe_allow_html=True,
+    )
+    if st.button("How to use", use_container_width=True, key="sidebar_how_to_use"):
+        st.session_state.step = -1
+        st.rerun()
+    if step != 0 and st.button("Home", use_container_width=True, key="sidebar_home"):
+        st.session_state.step = 0
+        st.rerun()
+
+    st.divider()
+
     SECTIONS = {
         "Problem Definition": [1, 2, 3, 4, 5],
         "Indicator Processing": [6, 7, 8],
@@ -1717,9 +1878,15 @@ with st.sidebar:
 
     step = st.session_state.step
     total_steps = len(STEP_LABELS)
-    pct = min(step, total_steps) / total_steps if total_steps else 0
-    st.progress(pct)
-    st.caption(f"Step {min(step, total_steps)} of {total_steps}")
+    if step < 0:
+        st.caption("Documentation")
+    elif step == 0:
+        st.caption("Landing page")
+        st.progress(0)
+    else:
+        pct = min(step, total_steps) / total_steps if total_steps else 0
+        st.progress(pct)
+        st.caption(f"Step {min(step, total_steps)} of {total_steps}")
 
     for section, steps in SECTIONS.items():
         st.markdown(
@@ -1966,6 +2133,9 @@ def landing_page():
         "</div>",
         unsafe_allow_html=True,
     )
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+    _render_method_descriptions_panel()
 
     st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -5441,6 +5611,7 @@ def step15():
 
 
 STEPS = {
+    -1: how_to_use_page,
     0: landing_page, 1: step1, 2: step2, 3: step3, 4: step4, 5: step5, 6: step6,
     7: step7, 8: step8, 9: step9, 10: step10, 11: step11, 12: step12,
     13: validation_intro, 14: auxiliary_intro, 15: step15,
