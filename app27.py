@@ -1441,8 +1441,8 @@ def landing_page():
         f"font-family:{_FONT_CSS};'>"
         "PRISM is an integrated multi-criteria decision-making framework "
         "for the comparative sustainability assessment of manufacturing "
-        "alternatives. It combines indicator-level weighting through MEREC, "
-        "cross-category consolidation via Reciprocal Composite Weighting (RCW), "
+        "alternatives. It combines intra-category weighting through MEREC, "
+        "inter-category weighting and consolidation via Reciprocal Composite Weighting (RCW), "
         "and multi-method MCDM aggregation producing a final compromise ranking "
         "through the Performance Stability Index (PSI).</p>",
         unsafe_allow_html=True,
@@ -1453,7 +1453,7 @@ def landing_page():
         "The framework evaluates alternatives across five sustainability "
         "dimensions — Environmental, Economic, Social, Quality, and "
         "Productivity — with an integrated validation and analytics layer "
-        "for robustness evidence and stakeholder-oriented sensitivity analysis.</p>",
+        "for robustness evidence.</p>",
         unsafe_allow_html=True,
     )
 
