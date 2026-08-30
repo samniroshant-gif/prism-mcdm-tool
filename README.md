@@ -53,6 +53,35 @@ The easiest free option is **Streamlit Community Cloud**:
 5. Click "Deploy" — you'll get a public URL (e.g. `yourapp.streamlit.app`)
    that anyone can open in their browser, no installation required
 
+## Saved assessments and team collaboration (optional)
+
+PRISM can persist named assessments to **Supabase** (free PostgreSQL) so you can
+save, reload, compare, and share category-level data entry with collaborators.
+
+### One-time Supabase setup
+
+1. Create a free project at https://supabase.com
+2. Open **SQL Editor** and run the script in [`supabase/schema.sql`](supabase/schema.sql)
+3. Copy your **Project URL** and **anon public** API key from Project Settings → API
+4. Add secrets locally (copy [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example)
+   to `.streamlit/secrets.toml`) or in **Streamlit Cloud → App settings → Secrets**:
+
+```toml
+SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
+SUPABASE_KEY = "YOUR_ANON_PUBLIC_KEY"
+```
+
+5. Reboot the app. The sidebar **Assessments** panel will show **Cloud save connected**.
+
+### Using saved assessments
+
+- **Save** — stores the full workflow state under an assessment name
+- **Load** — restores a previous assessment from the cloud list
+- **Share code** — share the 8-character code; collaborators use **Join shared assessment**
+  to enter data for their assigned categories in Step 5
+- **Compare assessments** — rank/PSI and category-score deltas between two snapshots
+- **Export / Import JSON** — works without Supabase for single-user backup
+
 ## How the tool works (matches your framework exactly)
 
 **Level 1 — System definition**
