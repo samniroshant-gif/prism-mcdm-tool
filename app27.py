@@ -1370,9 +1370,7 @@ def landing_page():
     st.markdown(
         f"<div class='prism-hero'>"
         f"<h1>PRISM</h1>"
-        f"<p>Performance Ranking via Integrated Sustainability Metrics<br>"
-        f"Enterprise-grade multi-criteria decision support for manufacturing "
-        f"sustainability assessment</p></div>",
+        f"<p>Performance Ranking via Integrated Sustainability Metrics</p></div>",
         unsafe_allow_html=True,
     )
 
