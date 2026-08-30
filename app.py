@@ -1451,8 +1451,8 @@ def landing_page():
         f"<p style='font-size:11pt;line-height:1.75;color:{_BRAND_SLATE};"
         f"font-family:{_FONT_CSS};'>"
         "The framework evaluates alternatives across five sustainability "
-        "dimensions — Environmental, Economic, Social, Quality, and "
-        "Productivity — with an integrated validation and analytics layer "
+        "dimensions: Environmental, Economic, Social, Quality, and "
+        "Productivity with an integrated validation and analytics layer "
         "for robustness evidence.</p>",
         unsafe_allow_html=True,
     )
