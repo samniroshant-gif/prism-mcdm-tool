@@ -1644,6 +1644,7 @@ def init_state():
         "sel_mcdm_methods": set(),
         "computed": False,
         "corr_acknowledged": False,
+        "outliers_acknowledged": False,
         "validation_choice": "None - skip validation",
         "disabled_indicators": set(),  # set of (ckey, j) tuples
         "current_assessment_id": None,
@@ -2367,6 +2368,57 @@ def get_raw_matrix(ckey):
     return raw, benefits
 
 
+OUTLIER_SD_THRESHOLD = 2.0
+MIN_ALTS_FOR_OUTLIER = 3
+
+
+def _indicator_values_fingerprint(cats=None):
+    cats = cats or ordered_sel_cats()
+    items = []
+    for ckey in cats:
+        ind_names, _, _ = get_full_indicators(ckey)
+        for j in range(len(ind_names)):
+            for pi in range(st.session_state.n_proc):
+                val = st.session_state.indicator_values.get((ckey, j, pi), 0.0)
+                items.append((ckey, j, pi, round(float(val), 6)))
+    return tuple(sorted(items))
+
+
+def detect_indicator_outliers(cats=None, threshold=OUTLIER_SD_THRESHOLD):
+    """Flag indicator values more than threshold SD from the row mean across alternatives."""
+    cats = cats or ordered_sel_cats()
+    names = st.session_state.proc_names
+    n_proc = len(names)
+    if n_proc < MIN_ALTS_FOR_OUTLIER:
+        return []
+
+    outliers = []
+    for ckey in cats:
+        ind_names, _, _ = get_full_indicators(ckey)
+        for j, ind_name in enumerate(ind_names):
+            vals = np.array([
+                st.session_state.indicator_values.get((ckey, j, pi), 0.0)
+                for pi in range(n_proc)
+            ], dtype=float)
+            mean = float(vals.mean())
+            std = float(vals.std(ddof=1)) if n_proc > 1 else 0.0
+            if std == 0.0:
+                continue
+            for pi, val in enumerate(vals):
+                z = abs(val - mean) / std
+                if z > threshold:
+                    outliers.append({
+                        "Category": CATS[ckey]["label"],
+                        "Indicator": ind_name,
+                        "Alternative": names[pi],
+                        "Value": round(float(val), 4),
+                        "Mean": round(mean, 4),
+                        "Std dev": round(std, 4),
+                        "Z-score": round(z, 2),
+                    })
+    return outliers
+
+
 def compute_category_score_from_raw(ckey, raw_override=None):
     names, units, benefits = get_full_indicators(ckey)
     n_ind = len(names)
@@ -2535,7 +2587,7 @@ def how_to_use_page():
         "<h3 class='prism-about-title'>Tips</h3>"
         "<p class='prism-about-body'>"
         "Save indicator drafts in Step 5 if you need to navigate away. "
-        "Negative values in Step 5 are flagged for review. "
+        "Negative values and statistical outliers (&gt;2 SD) are flagged for review before proceeding. "
         "Run at least one validation check before finalising a recommendation. "
         "Use Step 15 Decision support for a structured winner summary."
         "</p></div>",
@@ -3450,6 +3502,32 @@ def step5():
 
         st.write("")
 
+    value_fp = _indicator_values_fingerprint(edit_cats)
+    if st.session_state.get("_outlier_ack_fp") != value_fp:
+        st.session_state.outliers_acknowledged = False
+
+    outliers = detect_indicator_outliers(edit_cats)
+    if outliers:
+        st.warning(
+            "**Statistical outliers detected** — one or more values fall more than "
+            f"{OUTLIER_SD_THRESHOLD:.0f} standard deviations from the indicator mean "
+            "across alternatives. Review before proceeding."
+        )
+        st.dataframe(
+            pd.DataFrame(outliers),
+            use_container_width=True,
+            hide_index=True,
+        )
+        if not st.session_state.get("collaborator_mode"):
+            ack = st.checkbox(
+                "I have reviewed the flagged outliers and confirm they are correct",
+                value=st.session_state.get("outliers_acknowledged", False),
+                key="outlier_ack_cb",
+            )
+            st.session_state.outliers_acknowledged = ack
+            if ack:
+                st.session_state._outlier_ack_fp = value_fp
+
     if st.session_state.get("collaborator_mode") and st.session_state.get("current_assessment_id"):
         st.divider()
         if st.button("Save my categories to cloud", type="primary", key="collab_cloud_save"):
@@ -3520,6 +3598,8 @@ def step5():
                 has_values = any(v != 0 for v in st.session_state.indicator_values.values())
                 if not has_values:
                     st.error("Enter at least some values before proceeding.")
+                elif outliers and not st.session_state.get("outliers_acknowledged"):
+                    st.error("Review flagged outliers before proceeding.")
                 else:
                     st.session_state.corr_acknowledged = False
                     st.session_state.step = 6
