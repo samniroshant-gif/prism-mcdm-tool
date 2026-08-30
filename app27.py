@@ -84,6 +84,46 @@ _BRAND_TEXT   = "#1A202C"
 _BRAND_BORDER = "#DCE3EF"
 _BRAND_BG     = "#F7F9FC"
 _BRAND_CARD   = "#FFFFFF"
+_BRAND_ACCENT = "#1A3A6E"
+_BRAND_TEAL   = "#0E7490"
+
+_PSI_HELP = (
+    "PSI trade-off (p): values near 0 favour rank stability across MCDM methods; "
+    "values near 1 favour average performance. p = 0.50 balances both."
+)
+
+FIELD_HELP = {
+    "n_alternatives": "Number of options to compare (2–10). Each alternative receives a name and rank.",
+    "alternative_name": "Short label for this option — shown in charts, tables, and the Excel report.",
+    "category": "Sustainability dimension to include. Select at least one category to proceed.",
+    "use_custom": "Add criteria beyond PRISM's predefined indicator library for this assessment.",
+    "custom_count": "How many extra indicators to define for this category (0–5).",
+    "indicator_name": "Name of the custom criterion as it appears in tables and charts.",
+    "indicator_unit": "Measurement unit (e.g. kg CO₂, £, %, dB).",
+    "indicator_direction": "Benefit = higher is better; Cost = lower is better for ranking.",
+    "indicator_enable": "Include or exclude this predefined indicator from the assessment.",
+    "unit_select": "Measurement unit for this indicator in the decision matrix.",
+    "custom_unit": "Enter a unit not available in the preset dropdown.",
+    "indicator_value": "Raw measured value for this alternative on this indicator.",
+    "l3_category": "Category score carried forward into Level 3 MCDM aggregation.",
+    "weight_equal": "Treat every selected category as equally important.",
+    "weight_entropy": "Weight categories by data dispersion — more variation means higher influence.",
+    "weight_critic": "Weight by contrast and correlation — distinct, non-redundant categories score higher.",
+    "mcdm_method": "Ranking technique applied to weighted category scores before PSI aggregation.",
+    "psi_p": _PSI_HELP,
+    "combo_p": "p value used when computing PSI ranks across every category subset combination.",
+    "psi_combo_p": "p for the PSI-combo tie-breaker when multiple alternatives share rank 1.",
+    "analytics_tool": "Optional post-results analysis — contribution, leave-one-out, or stakeholder simulation.",
+    "rr_exclude": "Temporarily remove alternatives to test whether rankings reverse.",
+    "alt_norm": "Alternative normalisation method to compare against the default N2 scaling.",
+    "unc_pct": "Percentage perturbation applied to indicator values in uncertainty analysis.",
+    "n_iter": "Number of Monte Carlo or bootstrap iterations — higher values give smoother estimates.",
+    "mc_k": "Dirichlet concentration parameter — lower k means more weight uncertainty.",
+    "mc_override": "Manually set the Dirichlet k instead of using the automatic estimate.",
+    "ben_pct": "Percentage change applied to benefit-type indicators in sensitivity analysis.",
+    "cost_pct": "Percentage change applied to cost-type indicators in sensitivity analysis.",
+    "stakeholder_weight": "Relative importance assigned to this category in the stakeholder simulation.",
+}
 
 def tnr_label(text, *, color="#1A202C", size="12pt", weight="400", strike=False):
     """Render plain UI text in Times/Tinos (st.text uses a fixed sans font)."""
@@ -618,6 +658,178 @@ footer {{visibility: hidden;}}
     border-bottom: 1px solid {_BRAND_BORDER};
     padding-bottom: 4px;
     margin-bottom: 6px !important;
+}}
+
+/* ── Branded progress indicator (sidebar) ── */
+.prism-progress-wrap {{
+    margin: 4px 0 12px 0;
+}}
+.prism-progress-label {{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: {_FONT_CSS};
+    font-size: 10pt;
+    font-weight: 600;
+    color: {_BRAND_NAVY};
+    margin-bottom: 6px;
+    letter-spacing: 0.02em;
+}}
+.prism-progress-pct {{
+    font-size: 13pt;
+    font-weight: 700;
+    color: {_BRAND_NAVY};
+}}
+.prism-progress-track {{
+    height: 8px;
+    background: {_BRAND_BORDER};
+    border-radius: 999px;
+    overflow: hidden;
+}}
+.prism-progress-fill {{
+    height: 100%;
+    background: linear-gradient(90deg, {_BRAND_NAVY} 0%, {_BRAND_ACCENT} 100%);
+    border-radius: 999px;
+    transition: width 0.3s ease;
+}}
+.prism-progress-caption {{
+    font-family: {_FONT_CSS};
+    font-size: 9pt;
+    color: {_BRAND_MUTED};
+    margin: 6px 0 0 0;
+}}
+
+/* ── Secondary buttons & download ── */
+.stButton > button:not([kind="primary"]),
+.stDownloadButton > button {{
+    background: {_BRAND_CARD} !important;
+    color: {_BRAND_NAVY} !important;
+    border: 1px solid {_BRAND_BORDER} !important;
+}}
+.stButton > button:not([kind="primary"]):hover,
+.stDownloadButton > button:hover {{
+    background: #E8EEF7 !important;
+    border-color: {_BRAND_NAVY} !important;
+}}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {{
+    background: {_BRAND_NAVY} !important;
+}}
+
+/* ── Inputs, selects, radios — brand focus ring ── */
+[data-baseweb="input"] input:focus,
+[data-baseweb="select"]:focus-within,
+[data-baseweb="textarea"]:focus {{
+    border-color: {_BRAND_NAVY} !important;
+    box-shadow: 0 0 0 1px {_BRAND_NAVY} !important;
+}}
+[data-baseweb="checkbox"] svg {{
+    fill: {_BRAND_NAVY} !important;
+}}
+[data-baseweb="radio"] svg {{
+    fill: {_BRAND_NAVY} !important;
+}}
+
+/* ── Tooltip help icons ── */
+[data-testid="stTooltipIcon"],
+[data-testid="stTooltipHoverTarget"] {{
+    color: {_BRAND_MUTED} !important;
+}}
+[data-testid="stTooltipIcon"]:hover {{
+    color: {_BRAND_NAVY} !important;
+}}
+.stTooltipContent {{
+    background: {_BRAND_NAVY} !important;
+    color: #FFFFFF !important;
+    font-size: 10pt !important;
+    line-height: 1.5 !important;
+    border-radius: 6px !important;
+    max-width: 320px !important;
+}}
+
+/* ── Tabs & expanders — brand accent ── */
+[data-baseweb="tab"] {{
+    color: {_BRAND_SLATE} !important;
+}}
+[data-baseweb="tab"][aria-selected="true"] {{
+    color: {_BRAND_NAVY} !important;
+    border-bottom-color: {_BRAND_NAVY} !important;
+}}
+[data-testid="stExpander"] {{
+    border: 1px solid {_BRAND_BORDER} !important;
+    border-radius: 8px !important;
+    background: {_BRAND_CARD} !important;
+}}
+
+/* ── Scrollable tables on narrow screens ── */
+[data-testid="stDataFrame"],
+[data-testid="stDataEditor"],
+[data-testid="stTable"] {{
+    overflow-x: auto !important;
+}}
+
+/* ── Mobile-responsive layout ── */
+@media (max-width: 768px) {{
+    .block-container {{
+        padding: 1rem 0.75rem 2rem !important;
+        max-width: 100% !important;
+    }}
+    .prism-hero {{
+        padding: 24px 18px !important;
+        border-radius: 8px !important;
+    }}
+    .prism-hero h1 {{
+        font-size: 1.5rem !important;
+    }}
+    .prism-about-panel {{
+        padding: 18px 16px !important;
+    }}
+    .prism-framework-row {{
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }}
+    .prism-framework-box,
+    .prism-framework-box.wide {{
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+    }}
+    .prism-framework-arrow {{
+        transform: rotate(90deg);
+        margin: 4px auto !important;
+    }}
+    .prism-framework-side {{
+        flex-direction: column !important;
+    }}
+    [data-testid="column"] {{
+        flex: 1 1 100% !important;
+        min-width: 0 !important;
+        width: 100% !important;
+    }}
+    [data-testid="stHorizontalBlock"] {{
+        flex-wrap: wrap !important;
+        gap: 0.5rem !important;
+    }}
+    .stButton > button,
+    .stDownloadButton > button {{
+        width: 100% !important;
+    }}
+    [data-testid="stSidebar"] {{
+        min-width: 280px !important;
+    }}
+    .prism-progress-pct {{
+        font-size: 12pt !important;
+    }}
+}}
+
+@media (max-width: 480px) {{
+    .prism-dimension-pill {{
+        display: block !important;
+        margin: 4px 0 !important;
+        text-align: center;
+    }}
+    .prism-card {{
+        margin-bottom: 12px;
+    }}
 }}
 
 /* ── Divider ── */
@@ -1897,13 +2109,16 @@ with st.sidebar:
         f"font-family:{_FONT_CSS};margin:0 0 8px 0;'>Documentation</p>",
         unsafe_allow_html=True,
     )
-    if st.button("How to use", use_container_width=True, key="sidebar_how_to_use"):
+    if st.button("How to use", use_container_width=True, key="sidebar_how_to_use",
+                 help="Step-by-step guide for the full PRISM assessment workflow."):
         st.session_state.step = -1
         st.rerun()
-    if st.button("Method descriptions", use_container_width=True, key="sidebar_method_descriptions"):
+    if st.button("Method descriptions", use_container_width=True, key="sidebar_method_descriptions",
+                 help="Plain-language summary of every method used in PRISM."):
         st.session_state.step = -2
         st.rerun()
-    if step != 0 and st.button("Home", use_container_width=True, key="sidebar_home"):
+    if step != 0 and st.button("Home", use_container_width=True, key="sidebar_home",
+                               help="Return to the PRISM landing page."):
         st.session_state.step = 0
         st.rerun()
 
@@ -1921,13 +2136,48 @@ with st.sidebar:
     total_steps = len(STEP_LABELS)
     if step < 0:
         st.caption("Documentation")
+        st.markdown(
+            "<div class='prism-progress-wrap'>"
+            "<div class='prism-progress-label'>"
+            "<span>Assessment progress</span>"
+            "<span class='prism-progress-pct'>—</span></div>"
+            "<div class='prism-progress-track'>"
+            "<div class='prism-progress-fill' style='width:0%'></div>"
+            "</div>"
+            "<p class='prism-progress-caption'>Reference material</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
     elif step == 0:
         st.caption("Landing page")
-        st.progress(0)
+        st.markdown(
+            "<div class='prism-progress-wrap'>"
+            "<div class='prism-progress-label'>"
+            "<span>Assessment progress</span>"
+            "<span class='prism-progress-pct'>0%</span></div>"
+            "<div class='prism-progress-track'>"
+            "<div class='prism-progress-fill' style='width:0%'></div>"
+            "</div>"
+            "<p class='prism-progress-caption'>Ready to begin</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
     else:
         pct = min(step, total_steps) / total_steps if total_steps else 0
-        st.progress(pct)
-        st.caption(f"Step {min(step, total_steps)} of {total_steps}")
+        pct_int = int(round(pct * 100))
+        st.markdown(
+            f"<div class='prism-progress-wrap'>"
+            f"<div class='prism-progress-label'>"
+            f"<span>Assessment progress</span>"
+            f"<span class='prism-progress-pct'>{pct_int}%</span></div>"
+            f"<div class='prism-progress-track'>"
+            f"<div class='prism-progress-fill' style='width:{pct_int}%'></div>"
+            f"</div>"
+            f"<p class='prism-progress-caption'>"
+            f"Step {min(step, total_steps)} of {total_steps}</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     for section, steps in SECTIONS.items():
         st.markdown(
@@ -1978,6 +2228,7 @@ with st.sidebar:
                     file_name=fname,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
+                    help="Export inputs, weights, rankings, and validation results to Excel.",
                 )
             except Exception as e:
                 st.caption(f"Report error: {e}")
@@ -1992,7 +2243,8 @@ with st.sidebar:
         st.caption("Install openpyxl to enable Excel export.")
 
     st.divider()
-    if st.button("Reset", use_container_width=True):
+    if st.button("Reset", use_container_width=True,
+                 help="Clear all session data and restart from the landing page."):
         reset_all()
         st.rerun()
 
@@ -2191,7 +2443,8 @@ def step1():
     st.header("Step 1 - Define alternatives")
 
     n = st.slider("Number of alternatives", min_value=2, max_value=10,
-                   value=st.session_state.n_proc, key="n_proc_slider")
+                   value=st.session_state.n_proc, key="n_proc_slider",
+                   help=FIELD_HELP["n_alternatives"])
     st.session_state.n_proc = n
 
     names = st.session_state.proc_names
@@ -2207,7 +2460,8 @@ def step1():
     for i in range(n):
         with cols[i % len(cols)]:
             val = st.text_input(f"Alternative {i+1}", value=names[i], key=f"pname_{i}",
-                                 placeholder="enter name")
+                                 placeholder="enter name",
+                                 help=FIELD_HELP["alternative_name"])
             new_names.append(val.strip())
     st.session_state.proc_names = new_names
 
@@ -2227,7 +2481,8 @@ def step2():
         cat = CATS[key]
         with cols[i]:
             checked = key in st.session_state.sel_cats
-            new_val = st.checkbox(cat["label"], value=checked, key=f"catchk_{key}")
+            new_val = st.checkbox(cat["label"], value=checked, key=f"catchk_{key}",
+                                  help=FIELD_HELP["category"])
             if new_val:
                 st.session_state.sel_cats.add(key)
             else:
@@ -2256,6 +2511,7 @@ def step3():
         ["No, use the predefined indicators only", "Yes, I want to add custom indicators"],
         index=0 if st.session_state.use_custom_indicators in (None, False) else 1,
         key="use_custom_radio",
+        help=FIELD_HELP["use_custom"],
     )
     st.session_state.use_custom_indicators = use_custom.startswith("Yes")
 
@@ -2271,6 +2527,7 @@ def step3():
                     cat["label"], min_value=0, max_value=5,
                     value=st.session_state.custom_indicator_counts.get(ckey, 0),
                     key=f"customcnt_{ckey}",
+                    help=FIELD_HELP["custom_count"],
                 )
                 st.session_state.custom_indicator_counts[ckey] = int(cnt)
 
@@ -2291,17 +2548,20 @@ def step3():
                         name = st.text_input(
                             f"Indicator name #{ci+1}", value=info.get("name", ""),
                             key=f"custname_{ckey}_{ci}", placeholder="e.g. Noise level",
+                            help=FIELD_HELP["indicator_name"],
                         )
                     with c2:
                         unit = st.text_input(
                             "Unit", value=info.get("unit", ""),
                             key=f"custunit_{ckey}_{ci}", placeholder="e.g. dB",
+                            help=FIELD_HELP["indicator_unit"],
                         )
                     with c3:
                         benefit = st.selectbox(
                             "Direction", ["Cost (lower better)", "Benefit (higher better)"],
                             index=1 if info.get("benefit", False) else 0,
                             key=f"custben_{ckey}_{ci}",
+                            help=FIELD_HELP["indicator_direction"],
                         )
                     st.session_state.custom_indicators[(ckey, ci)] = {
                         "name": name.strip(), "unit": unit.strip() or "unit",
@@ -2358,6 +2618,7 @@ def step4():
                     "use", value=is_enabled,
                     key=f"ind_enabled_{ckey}_{j}",
                     label_visibility="collapsed",
+                    help=FIELD_HELP["indicator_enable"],
                 )
                 if enabled:
                     disabled.discard((ckey, j))
@@ -2373,6 +2634,7 @@ def step4():
                     "unit", display_options, index=default_index,
                     key=f"unitsel_{key}", label_visibility="collapsed",
                     disabled=not enabled,
+                    help=FIELD_HELP["unit_select"],
                 )
             with c4:
                 if chosen == CUSTOM_SENTINEL and enabled:
@@ -2380,6 +2642,7 @@ def step4():
                         "custom unit", value=current if not is_preset else "",
                         key=f"unitcustom_{key}", label_visibility="collapsed",
                         placeholder="type unit",
+                        help=FIELD_HELP["custom_unit"],
                     )
                     final_unit = custom_val.strip() or "unit"
                 else:
@@ -2454,8 +2717,9 @@ def step5():
             st.session_state[seed_key] = pd.DataFrame(seed, index=rows, columns=names)
 
         # column_config disables sort arrows on process name columns
-        col_cfg = {name: st.column_config.NumberColumn(name, help=None)
-                   for name in names}
+        col_cfg = {name: st.column_config.NumberColumn(
+            name, help=FIELD_HELP["indicator_value"],
+        ) for name in names}
         edited = st.data_editor(
             st.session_state[seed_key],
             key=editor_key,
@@ -2859,7 +3123,8 @@ def step9():
         cat = CATS[ckey]
         with cols[i]:
             checked = ckey in st.session_state.l3_cats
-            new_val = st.checkbox(cat["label"], value=checked, key=f"l3chk_{ckey}")
+            new_val = st.checkbox(cat["label"], value=checked, key=f"l3chk_{ckey}",
+                                  help=FIELD_HELP["l3_category"])
             if new_val:
                 st.session_state.l3_cats.add(ckey)
             else:
@@ -2884,9 +3149,15 @@ def step10():
     st.header("Step 10 - Category weighting methods")
 
     options = {"equal": "Equal weights", "entropy": "Entropy weights", "critic": "CRITIC weights"}
+    weight_help = {
+        "equal": FIELD_HELP["weight_equal"],
+        "entropy": FIELD_HELP["weight_entropy"],
+        "critic": FIELD_HELP["weight_critic"],
+    }
     for key, label in options.items():
         checked = key in st.session_state.sel_weight_methods
-        new_val = st.checkbox(label, value=checked, key=f"wmchk_{key}")
+        new_val = st.checkbox(label, value=checked, key=f"wmchk_{key}",
+                              help=weight_help[key])
         if new_val:
             st.session_state.sel_weight_methods.add(key)
         else:
@@ -2980,6 +3251,7 @@ def step11():
                     f"{short} — {full}",
                     value=checked,
                     key=f"mmchk_{key}",
+                    help=FIELD_HELP["mcdm_method"],
                 )
                 if new_val:
                     st.session_state.sel_mcdm_methods.add(key)
@@ -3070,7 +3342,8 @@ def step12():
         )
 
         p_val = st.slider("p (stability <-> performance)", min_value=0.01, max_value=0.99,
-                           value=0.5, step=0.01, key="psi_p_slider")
+                           value=0.5, step=0.01, key="psi_p_slider",
+                           help=FIELD_HELP["psi_p"])
 
         psi_vals = calc_psi(method_ranks, methods, p_val)
         psi_ranks = rank_with_ties(psi_vals, ascending=False)
@@ -3101,7 +3374,8 @@ def step12():
         n_combo = 2 ** len(l3_cats) - 1
 
         combo_p = st.slider("p for combination view", min_value=0.0, max_value=1.0,
-                             value=0.5, step=0.01, key="combo_p_slider")
+                             value=0.5, step=0.01, key="combo_p_slider",
+                             help=FIELD_HELP["combo_p"])
 
         combos = get_combinations(l3_cats)
         cat_initial = {c: CAT_SHORT.get(c, CATS[c]["label"][:1]) for c in l3_cats}
@@ -3208,7 +3482,8 @@ def step12():
             )
 
             psi_combo_p = st.slider("p for PSI-combo tie-breaker", min_value=0.01, max_value=0.99,
-                                     value=0.5, step=0.01, key="psi_combo_p_slider")
+                                     value=0.5, step=0.01, key="psi_combo_p_slider",
+                                     help=FIELD_HELP["psi_combo_p"])
 
             combo_rank_dict = {ci: rank_grid[:, ci] for ci in range(n_combos_total)}
             combo_keys_list = list(range(n_combos_total))
@@ -3276,13 +3551,15 @@ def validation_rank_reversal():
         return
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="rr_p_slider")
+                       value=0.5, step=0.01, key="rr_p_slider",
+                       help=FIELD_HELP["psi_p"])
 
     excluded = st.multiselect(
         "Select alternative(s) to temporarily exclude",
         options=names,
         default=[],
         key="rr_exclude",
+        help=FIELD_HELP["rr_exclude"],
     )
 
     if not excluded:
@@ -3465,9 +3742,11 @@ def validation_normalisation_sensitivity():
         "Alternative normalisation method",
         [k for k in NORM_OPTIONS if k != "N2 (baseline)"],
         key="norm_sens_select",
+        help=FIELD_HELP["alt_norm"],
     )
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="norm_sens_p_slider")
+                       value=0.5, step=0.01, key="norm_sens_p_slider",
+                       help=FIELD_HELP["psi_p"])
 
     alt_norm_func = NORM_OPTIONS[alt_norm_label]
 
@@ -3562,13 +3841,14 @@ def validation_bootstrap_merec_rcw():
             "Indicator value uncertainty (±%)",
             min_value=1, max_value=50, value=10, step=1,
             key="bs_unc_pct",
-            help="Each indicator value is sampled uniformly within ±this% of its observed value.",
+            help=FIELD_HELP["unc_pct"],
         )
     with c2:
         n_iter = st.slider(
             "Number of bootstrap iterations",
             min_value=100, max_value=2000, value=500, step=100,
             key="bs_n_iter",
+            help=FIELD_HELP["n_iter"],
         )
 
     if not st.button("Run bootstrap", type="primary", key="bs_run"):
@@ -3900,18 +4180,20 @@ def validation_indicator_uncertainty():
             "Indicator value uncertainty (±%)",
             min_value=1, max_value=50, value=10, step=1,
             key="ind_unc_pct",
-            help="Each indicator value sampled uniformly within ±this% of observed.",
+            help=FIELD_HELP["unc_pct"],
         )
     with c2:
         n_iter = st.slider(
             "Monte Carlo iterations",
             min_value=100, max_value=10000, value=500, step=100,
             key="ind_unc_iter",
+            help=FIELD_HELP["n_iter"],
         )
 
     p_psi = st.slider(
         "p value (PSI)", min_value=0.0, max_value=1.0,
         value=0.5, step=0.01, key="ind_unc_p",
+        help=FIELD_HELP["psi_p"],
     )
 
     if not st.button("Run uncertainty propagation", type="primary",
@@ -4599,13 +4881,19 @@ def validation_weight_sensitivity():
     st.markdown("**Overall ranking across category combinations (this weighting scheme set)**")
 
     wm_options = {"equal": "Equal", "entropy": "Entropy", "critic": "CRITIC"}
+    sens1_weight_help = {
+        "equal": FIELD_HELP["weight_equal"],
+        "entropy": FIELD_HELP["weight_entropy"],
+        "critic": FIELD_HELP["weight_critic"],
+    }
     if "sens1_wm" not in st.session_state:
         st.session_state.sens1_wm = set(st.session_state.sel_weight_methods) or {"equal"}
     cols = st.columns(3)
     for i, (k, lbl) in enumerate(wm_options.items()):
         with cols[i]:
             checked = k in st.session_state.sens1_wm
-            new_val = st.checkbox(lbl, value=checked, key=f"sens1wm_{k}")
+            new_val = st.checkbox(lbl, value=checked, key=f"sens1wm_{k}",
+                                  help=sens1_weight_help.get(k))
             if new_val:
                 st.session_state.sens1_wm.add(k)
             else:
@@ -4614,7 +4902,8 @@ def validation_weight_sensitivity():
         st.session_state.sens1_wm = {"equal"}
 
     sens1_p = st.slider("p for combination view", min_value=0.0, max_value=1.0,
-                         value=0.5, step=0.01, key="sens1_p_slider")
+                         value=0.5, step=0.01, key="sens1_p_slider",
+                         help=FIELD_HELP["combo_p"])
 
     combos = get_combinations(l3_cats)
     cat_initial = {c: CAT_SHORT.get(c, CATS[c]["label"][:1]) for c in l3_cats}
@@ -4699,13 +4988,15 @@ def validation_bc_sensitivity():
     c1, c2 = st.columns(2)
     with c1:
         ben_pct = st.slider("Benefit-type indicators (%)", min_value=-25, max_value=25,
-                             value=0, step=5, key="bc_ben_slider")
+                             value=0, step=5, key="bc_ben_slider",
+                             help=FIELD_HELP["ben_pct"])
     with c2:
         cost_pct = st.slider("Cost-type indicators (%)", min_value=-25, max_value=25,
-                              value=0, step=5, key="bc_cost_slider")
+                              value=0, step=5, key="bc_cost_slider",
+                              help=FIELD_HELP["cost_pct"])
 
     p_val = st.slider("p value", min_value=0.0, max_value=1.0, value=0.5, step=0.01,
-                       key="bc_p_slider")
+                       key="bc_p_slider", help=FIELD_HELP["psi_p"])
 
     multi = len(sel_mcdm_methods) > 1
     cols = ["Alternative"] + [METHOD_LABELS[m] for m in sel_mcdm_methods]
@@ -4845,13 +5136,16 @@ def validation_monte_carlo():
     with c1:
         st.metric("Data-driven k (inter-method agreement)", f"{k_value:.1f} / 100")
     with c2:
-        use_custom_k = st.checkbox("Override k manually", value=False, key="mc_use_custom_k")
+        use_custom_k = st.checkbox("Override k manually", value=False, key="mc_use_custom_k",
+                                   help=FIELD_HELP["mc_override"])
         if use_custom_k:
             k_value = st.slider("k value", min_value=1.0, max_value=100.0,
-                                 value=float(min(k_value, 50.0)), step=1.0, key="mc_k_override")
+                                 value=float(min(k_value, 50.0)), step=1.0, key="mc_k_override",
+                                 help=FIELD_HELP["mc_k"])
     with c3:
         p_val = st.slider("p value (for PSI compromise rank)", min_value=0.0, max_value=1.0,
-                           value=0.5, step=0.01, key="mc_p_slider")
+                           value=0.5, step=0.01, key="mc_p_slider",
+                           help=FIELD_HELP["psi_p"])
 
     with st.expander("Show Equal/Entropy/CRITIC weights used to compute k"):
         wdf = pd.DataFrame(
@@ -4957,7 +5251,8 @@ def analytics_category_weighted_contribution():
     multi     = len(sel_mcdm) > 1
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="cat_contrib_p")
+                       value=0.5, step=0.01, key="cat_contrib_p",
+                       help=FIELD_HELP["psi_p"])
 
     # ── Step 1: S_c,i = CategoryScore × w_c^RCW ─────────────────────────────
     S = np.array([cat_scores[c] * final_w[ci]
@@ -5052,7 +5347,8 @@ def analytics_combined_contribution():
     multi    = len(sel_mcdm) > 1
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="combined_contrib_p")
+                       value=0.5, step=0.01, key="combined_contrib_p",
+                       help=FIELD_HELP["psi_p"])
 
     if multi and method_ranks:
         psi_scores = calc_psi(method_ranks, sel_mcdm, p_val)
@@ -5332,7 +5628,8 @@ def analytics_leave_one_out():
         return
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="loo_p_slider")
+                       value=0.5, step=0.01, key="loo_p_slider",
+                       help=FIELD_HELP["psi_p"])
 
     # ── Baseline PSI ranks ────────────────────────────────────────────────────
     if multi and method_ranks:
@@ -5450,7 +5747,8 @@ def analytics_indicator_contribution():
     multi    = len(sel_mcdm) > 1
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="ind_contrib_p")
+                       value=0.5, step=0.01, key="ind_contrib_p",
+                       help=FIELD_HELP["psi_p"])
 
     if multi and method_ranks:
         psi_scores = calc_psi(method_ranks, sel_mcdm, p_val)
@@ -5683,7 +5981,8 @@ def analytics_indicator_loo():
         return
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="ind_loo_p")
+                       value=0.5, step=0.01, key="ind_loo_p",
+                       help=FIELD_HELP["psi_p"])
 
     # Baseline PSI ranks
     base_psi = calc_psi(method_ranks, sel_mcdm_methods, p_val)
@@ -5808,7 +6107,8 @@ def analytics_stakeholder_preference():
 
     # ── p value ───────────────────────────────────────────────────────────────
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
-                       value=0.5, step=0.01, key="sh_p_slider")
+                       value=0.5, step=0.01, key="sh_p_slider",
+                       help=FIELD_HELP["psi_p"])
 
     # ── Category weight sliders ───────────────────────────────────────────────
     st.markdown("**Adjust category weights (%)**")
@@ -5831,6 +6131,7 @@ def analytics_stakeholder_preference():
                 value=st.session_state.get(f"sh_w_{ckey}", default_val),
                 step=1, key=f"sh_w_{ckey}",
                 label_visibility="collapsed",
+                help=FIELD_HELP["stakeholder_weight"],
             )
         custom_weights[ckey] = val
 
@@ -5991,6 +6292,7 @@ def auxiliary_intro():
             "4. Stakeholder preference simulation",
         ],
         index=0, key="auxiliary_radio",
+        help=FIELD_HELP["analytics_tool"],
     )
 
     if choice.startswith("1."):
