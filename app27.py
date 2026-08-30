@@ -1609,6 +1609,154 @@ def _build_decision_support_tables(winner_info):
     return summary_rows, strengths, weaknesses, profile_rows
 
 
+def _dci_confidence_label(score):
+    if score >= 80:
+        return "High confidence"
+    if score >= 60:
+        return "Moderate confidence"
+    if score >= 40:
+        return "Low confidence"
+    return "Very low confidence"
+
+
+def _dci_badge_class(score):
+    if score >= 80:
+        return "green"
+    if score >= 60:
+        return "amber"
+    return "red"
+
+
+def _compute_decision_confidence_index(winner_info):
+    """Composite 0–100 confidence score for stakeholder reporting."""
+    wi = winner_info["winner_idx"]
+    method_ranks = st.session_state.last_method_ranks
+    methods = list(st.session_state.sel_mcdm_methods) or list(method_ranks.keys())
+    l3_cats = ordered_l3_cats()
+    cat_scores = st.session_state.cat_scores
+    sel_wm = st.session_state.sel_weight_methods
+    final_w = st.session_state.final_cat_weights
+
+    components = []
+    mc_pct = bs_pct = validation_pct = method_agreement_pct = None
+    robust_count = scored_count = 0
+
+    dashboard = st.session_state.get("validation_dashboard_results")
+    if dashboard:
+        robust_count = int(dashboard.get("robust_count", 0))
+        scored_count = int(dashboard.get("scored_count", 0))
+        if scored_count > 0:
+            validation_pct = 100.0 * robust_count / scored_count
+            components.append({
+                "name": "Robustness test pass rate",
+                "value": round(validation_pct, 1),
+                "source": f"{robust_count} of {scored_count} checks",
+            })
+        for check in dashboard.get("checks", []):
+            if check.get("id") == "monte_carlo":
+                mc_pct = check.get("metric_pct")
+            elif check.get("id") == "bootstrap":
+                bs_pct = check.get("metric_pct")
+
+    if mc_pct is None:
+        mc_psi = st.session_state.get("mc_psi_rank_counts")
+        if mc_psi is not None:
+            n_iter = st.session_state.get("mc_n_iter", 1) or 1
+            mc_pct = 100.0 * float(mc_psi[wi, 0]) / n_iter
+        elif l3_cats and methods:
+            mc_check = _assess_monte_carlo(wi, l3_cats, cat_scores, methods, final_w)
+            mc_pct = mc_check.get("metric_pct")
+
+    if mc_pct is not None:
+        if not any(c["name"] == "Monte Carlo rank stability" for c in components):
+            components.append({
+                "name": "Monte Carlo rank stability",
+                "value": round(float(mc_pct), 1),
+                "source": "Step 13",
+            })
+
+    bs_export = st.session_state.get("export_bootstrap")
+    if bs_export and "pct_stable" in bs_export:
+        bs_pct = float(bs_export["pct_stable"])
+        bs_detail = "RCW weight ordering stability"
+    else:
+        bs_detail = "Step 13"
+
+    if bs_pct is None and l3_cats and methods:
+        settings = _dashboard_iter_settings()
+        bs_check = _assess_bootstrap(
+            wi, l3_cats, methods, sel_wm,
+            n_iter=settings["bs_n_iter"], unc_pct=settings["bs_unc_pct"],
+        )
+        bs_pct = bs_check.get("metric_pct")
+
+    if bs_pct is not None:
+        if not any(c["name"] == "Bootstrap stability" for c in components):
+            components.append({
+                "name": "Bootstrap stability",
+                "value": round(float(bs_pct), 1),
+                "source": bs_detail,
+            })
+
+    if methods:
+        n_rank1 = sum(1 for m in methods if int(method_ranks[m][wi]) == 1)
+        method_agreement_pct = 100.0 * n_rank1 / len(methods)
+        components.append({
+            "name": "MCDM method agreement",
+            "value": round(method_agreement_pct, 1),
+            "source": f"{n_rank1} of {len(methods)} methods",
+        })
+
+    if not components:
+        return {
+            "score": None,
+            "label": None,
+            "summary": (
+                "Insufficient validation data — complete Step 13 for a confidence score."
+            ),
+            "components": [],
+            "badge": "na",
+        }
+
+    score = int(round(sum(c["value"] for c in components) / len(components)))
+    label = _dci_confidence_label(score)
+
+    summary_parts = [f"{label} ({score}/100):"]
+    if scored_count > 0:
+        summary_parts.append(
+            f" The recommendation is stable across {robust_count} of {scored_count} "
+            f"robustness tests"
+        )
+    if mc_pct is not None:
+        if scored_count > 0:
+            summary_parts.append(
+                f" and the top-ranked alternative leads in {float(mc_pct):.0f}% of "
+                f"Monte Carlo iterations"
+            )
+        else:
+            summary_parts.append(
+                f" The top-ranked alternative leads in {float(mc_pct):.0f}% of "
+                f"Monte Carlo iterations"
+            )
+    summary_parts.append(".")
+    if bs_pct is not None and float(bs_pct) < 60:
+        summary_parts.append(f" Bootstrap stability is limited ({float(bs_pct):.0f}%).")
+    elif bs_pct is not None and float(bs_pct) >= 80:
+        summary_parts.append(f" Bootstrap weight stability is strong ({float(bs_pct):.0f}%).")
+    if method_agreement_pct is not None and method_agreement_pct < 60:
+        summary_parts.append(
+            f" MCDM methods show partial agreement ({method_agreement_pct:.0f}%)."
+        )
+
+    return {
+        "score": score,
+        "label": label,
+        "summary": "".join(summary_parts),
+        "components": components,
+        "badge": _dci_badge_class(score),
+    }
+
+
 def compute_dirichlet_k(mat):
     k_cat = mat.shape[0]
     w_eq = np.full(k_cat, 1.0 / k_cat)
@@ -5277,6 +5425,7 @@ def _assess_monte_carlo(winner_idx, l3_cats, cat_scores, methods, final_w, n_ite
     return {
         "id": "monte_carlo", "name": "Monte Carlo uncertainty (Dirichlet)",
         "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+        "metric_pct": pct,
     }
 
 
@@ -5426,6 +5575,7 @@ def _assess_bootstrap(winner_idx, l3_cats, methods, sel_wm, n_iter=500, unc_pct=
     return {
         "id": "bootstrap", "name": "Bootstrap stability (MEREC and RCW)",
         "status": status, "detail": detail, "status_label": TRAFFIC_LABELS[status],
+        "metric_pct": pct,
     }
 
 
@@ -7202,6 +7352,40 @@ def step15():
     names = st.session_state.proc_names
     methods = list(st.session_state.sel_mcdm_methods) or list(method_ranks.keys())
     winner_info = _resolve_overall_winner(names, method_ranks, methods)
+
+    if "validation_dashboard_results" not in st.session_state:
+        with st.spinner("Computing validation metrics for confidence index..."):
+            compute_sensitivity_dashboard(force=False)
+    else:
+        compute_sensitivity_dashboard(force=False)
+
+    dci = _compute_decision_confidence_index(winner_info)
+
+    st.subheader("Decision Confidence Index")
+    if dci["score"] is None:
+        st.info(dci["summary"])
+    else:
+        st.markdown(
+            f"<span class='prism-traffic-badge prism-traffic-{dci['badge']}'>"
+            f"{dci['label']} — {dci['score']}/100</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<div class='prism-about-panel'>"
+            f"<p class='prism-about-body'>{dci['summary']}</p></div>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("Confidence index breakdown"):
+            st.dataframe(
+                pd.DataFrame([
+                    {"Component": c["name"], "Score": c["value"], "Detail": c["source"]}
+                    for c in dci["components"]
+                ]),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     summary, strengths, weaknesses, profile = _build_decision_support_tables(winner_info)
 
     st.subheader("Overall recommendation")
