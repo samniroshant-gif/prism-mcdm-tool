@@ -4649,6 +4649,10 @@ def validation_bootstrap_merec_rcw():
         st.info("Set parameters above and click Run bootstrap.")
         return
 
+    st.session_state.dash_bs_n_iter = int(n_iter)
+    st.session_state.dash_bs_unc_pct = int(unc_pct)
+    st.session_state.pop("validation_dashboard_results", None)
+
     rng = np.random.default_rng(42)
     progress = st.progress(0, text="Running bootstrap...")
 
@@ -4997,6 +5001,10 @@ def validation_indicator_uncertainty():
             "through the full PRISM pipeline. Set ±% uncertainty and click Run."
         )
         return
+
+    st.session_state.dash_ind_unc_iter = int(n_iter)
+    st.session_state.dash_ind_unc_pct = int(unc_pct)
+    st.session_state.pop("validation_dashboard_results", None)
 
     rng      = np.random.default_rng(42)
     progress = st.progress(0, text="Running indicator uncertainty propagation...")
@@ -5385,7 +5393,7 @@ def _assess_normalisation(winner_idx, l3_cats, methods, method_ranks, sel_wm):
     }
 
 
-def _assess_bootstrap(winner_idx, l3_cats, methods, sel_wm, n_iter=300, unc_pct=10):
+def _assess_bootstrap(winner_idx, l3_cats, methods, sel_wm, n_iter=500, unc_pct=10):
     rng = np.random.default_rng(42)
     multi = len(methods) > 1
     rank1_count = 0
@@ -5421,7 +5429,7 @@ def _assess_bootstrap(winner_idx, l3_cats, methods, sel_wm, n_iter=300, unc_pct=
     }
 
 
-def _assess_indicator_uncertainty(winner_idx, l3_cats, methods, sel_wm, n_iter=300, unc_pct=10):
+def _assess_indicator_uncertainty(winner_idx, l3_cats, methods, sel_wm, n_iter=500, unc_pct=10):
     multi = len(methods) > 1
     rng = np.random.default_rng(42)
     rank1_count = 0
@@ -5494,10 +5502,22 @@ def _overall_dashboard_status(checks):
     return "green"
 
 
+def _dashboard_iter_settings():
+    """Iteration counts used by the Step 13 sensitivity dashboard."""
+    return {
+        "bs_n_iter": int(st.session_state.get("dash_bs_n_iter", st.session_state.get("bs_n_iter", 500))),
+        "bs_unc_pct": int(st.session_state.get("dash_bs_unc_pct", st.session_state.get("bs_unc_pct", 10))),
+        "ind_n_iter": int(st.session_state.get("dash_ind_unc_iter", st.session_state.get("ind_unc_iter", 500))),
+        "ind_unc_pct": int(st.session_state.get("dash_ind_unc_pct", st.session_state.get("ind_unc_pct", 10))),
+    }
+
+
 def compute_sensitivity_dashboard(force=False):
     cache_key = "validation_dashboard_results"
-    if not force and cache_key in st.session_state:
-        return st.session_state[cache_key]
+    settings = _dashboard_iter_settings()
+    cached = st.session_state.get(cache_key)
+    if not force and cached and cached.get("settings") == settings:
+        return cached
 
     method_ranks = st.session_state.last_method_ranks
     names = st.session_state.proc_names
@@ -5516,8 +5536,14 @@ def compute_sensitivity_dashboard(force=False):
         _assess_monte_carlo(wi, l3_cats, cat_scores, methods, final_w),
         _assess_rank_reversal(wi, l3_cats, methods, method_ranks, sel_wm, names),
         _assess_normalisation(wi, l3_cats, methods, method_ranks, sel_wm),
-        _assess_bootstrap(wi, l3_cats, methods, sel_wm),
-        _assess_indicator_uncertainty(wi, l3_cats, methods, sel_wm),
+        _assess_bootstrap(
+            wi, l3_cats, methods, sel_wm,
+            n_iter=settings["bs_n_iter"], unc_pct=settings["bs_unc_pct"],
+        ),
+        _assess_indicator_uncertainty(
+            wi, l3_cats, methods, sel_wm,
+            n_iter=settings["ind_n_iter"], unc_pct=settings["ind_unc_pct"],
+        ),
     ]
 
     overall = _overall_dashboard_status(checks)
@@ -5532,6 +5558,7 @@ def compute_sensitivity_dashboard(force=False):
         "overall_status": overall,
         "overall_label": TRAFFIC_LABELS[overall],
         "summary": summary,
+        "settings": settings,
     }
     st.session_state[cache_key] = result
     st.session_state.validation_choice = "Sensitivity dashboard"
@@ -5567,6 +5594,41 @@ def validation_intro():
         st.caption(
             "All seven validation checks run automatically and focus on the "
             "recommended winner from Step 12."
+        )
+
+    st.markdown("**Dashboard iteration settings**")
+    dc1, dc2, dc3, dc4 = st.columns(4)
+    with dc1:
+        st.slider(
+            "Bootstrap iterations",
+            min_value=100, max_value=2000,
+            value=int(st.session_state.get("dash_bs_n_iter", 500)), step=100,
+            key="dash_bs_n_iter",
+            help="Iterations for check 6 in the dashboard summary.",
+        )
+    with dc2:
+        st.slider(
+            "Bootstrap ±%",
+            min_value=1, max_value=50,
+            value=int(st.session_state.get("dash_bs_unc_pct", 10)), step=1,
+            key="dash_bs_unc_pct",
+            help="Indicator noise range for dashboard bootstrap check.",
+        )
+    with dc3:
+        st.slider(
+            "Indicator uncertainty iterations",
+            min_value=100, max_value=10000,
+            value=int(st.session_state.get("dash_ind_unc_iter", 500)), step=100,
+            key="dash_ind_unc_iter",
+            help="Iterations for check 7 in the dashboard summary.",
+        )
+    with dc4:
+        st.slider(
+            "Indicator uncertainty ±%",
+            min_value=1, max_value=50,
+            value=int(st.session_state.get("dash_ind_unc_pct", 10)), step=1,
+            key="dash_ind_unc_pct",
+            help="Indicator noise range for dashboard uncertainty check.",
         )
 
     with st.spinner("Running sensitivity dashboard..."):
