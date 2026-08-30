@@ -2257,6 +2257,27 @@ def step5():
             for pi in range(len(names)):
                 st.session_state.indicator_values[(ckey, j, pi)] = float(edited.iloc[j, pi])
 
+        negatives = []
+        for j in range(len(ind_names)):
+            for pi in range(len(names)):
+                val = float(edited.iloc[j, pi])
+                if val < 0:
+                    negatives.append({
+                        "Indicator": ind_names[j],
+                        "Alternative": names[pi],
+                        "Value": val,
+                    })
+        if negatives:
+            st.warning(
+                f"Negative values detected in **{cat['label']}** — "
+                "verify entries are correct before proceeding."
+            )
+            st.dataframe(
+                pd.DataFrame(negatives),
+                use_container_width=True,
+                hide_index=True,
+            )
+
         st.write("")
 
     # ── Save / Load Draft ────────────────────────────────────────────────────
@@ -5397,7 +5418,7 @@ def step15():
     st.dataframe(pd.DataFrame(weaknesses), use_container_width=True, hide_index=True)
 
     st.subheader("Category score profile")
-    st.dataframe(pd.DataFrame(profile_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(profile), use_container_width=True, hide_index=True)
 
     st.divider()
     c1, c2, c3, c4 = st.columns(4)
