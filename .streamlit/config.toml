@@ -1,7 +1,13 @@
 [theme]
-font = "serif"
+font = "sans-serif"
 base = "light"
 primaryColor = "#0D2B5E"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F7F9FC"
+backgroundColor = "#F7F9FC"
+secondaryBackgroundColor = "#FFFFFF"
 textColor = "#1A202C"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = false

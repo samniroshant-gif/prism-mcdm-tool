@@ -39,7 +39,12 @@ except ImportError:
     OPENPYXL_OK = False
 from scipy.stats import spearmanr
 
-st.set_page_config(page_title="PRISM - Performance Ranking via Integrated Sustainability Metrics", page_icon="🧭", layout="wide")
+st.set_page_config(
+    page_title="PRISM | Sustainability MCDM Assessment",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # Cloud-safe Times New Roman lookalike (Tinos) for matplotlib + CSS @font-face
 _FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
@@ -68,8 +73,16 @@ for _fname, _style, _weight in _TINO_FILES:
         except Exception:
             pass
 
-_FONT_CSS = '"Times New Roman", "Tinos", Times, serif'
+_FONT_CSS = '"Inter", "Segoe UI", system-ui, -apple-system, sans-serif'
 _FONT_FACES = "\n".join(_FONT_FACE_CSS)
+
+# Brand palette — industry / corporate sustainability tooling
+_BRAND_NAVY   = "#0D2B5E"
+_BRAND_SLATE  = "#4A5568"
+_BRAND_MUTED  = "#6B7A99"
+_BRAND_BORDER = "#DCE3EF"
+_BRAND_BG     = "#F7F9FC"
+_BRAND_CARD   = "#FFFFFF"
 
 def tnr_label(text, *, color="#1A202C", size="12pt", weight="400", strike=False):
     """Render plain UI text in Times/Tinos (st.text uses a fixed sans font)."""
@@ -83,6 +96,7 @@ def tnr_label(text, *, color="#1A202C", size="12pt", weight="400", strike=False)
 st.markdown(f"""
 <style>
 {_FONT_FACES}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap');
 
 /* ── Global Times / Tinos (no blanket span — preserves Material Icons) ── */
@@ -112,7 +126,7 @@ html, body, .stApp,
 table, th, td, .stDataFrame, .stTable, .stDataEditor,
 div, p, label, input, textarea, select, button, pre {{
     font-family: {_FONT_CSS} !important;
-    font-size: 12pt !important;
+    font-size: 11pt !important;
 }}
 
 /* Force Streamlit fixed/monospace text widgets onto Tinos */
@@ -134,7 +148,7 @@ pre, code, .stCodeBlock, .stCode {{
 [data-testid="stCaptionContainer"],
 .stCaption {{
     font-family: {_FONT_CSS} !important;
-    font-size: 12pt !important;
+    font-size: 11pt !important;
 }}
 
 /* ── Headings — dark blue, bold ── */
@@ -178,7 +192,7 @@ h1, h2, h3, h4, h5, h6,
     color: #FFFFFF !important;
     font-weight: 700 !important;
     font-family: {_FONT_CSS} !important;
-    font-size: 12pt !important;
+    font-size: 11pt !important;
 }}
 [data-testid="stDataFrame"] td,
 [data-testid="stTable"] td,
@@ -240,6 +254,143 @@ span[class*="material-symbols"],
     background-color: #0D2B5E !important;
 }}
 
+/* ── Hide Streamlit chrome for a cleaner enterprise shell ── */
+#MainMenu {{visibility: hidden;}}
+footer {{visibility: hidden;}}
+[data-testid="stToolbar"] {{visibility: hidden; height: 0;}}
+
+/* ── Main content area ── */
+[data-testid="stAppViewContainer"] > .main {{
+    background: {_BRAND_BG} !important;
+}}
+.block-container {{
+    padding-top: 2rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 1180px !important;
+}}
+
+/* ── Metrics — dashboard-style KPI tiles ── */
+[data-testid="stMetric"] {{
+    background: {_BRAND_CARD} !important;
+    border: 1px solid {_BRAND_BORDER} !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    box-shadow: 0 1px 3px rgba(13,43,94,0.06) !important;
+}}
+[data-testid="stMetricLabel"] {{
+    color: {_BRAND_MUTED} !important;
+    font-size: 11pt !important;
+    font-weight: 500 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+}}
+[data-testid="stMetricValue"] {{
+    color: {_BRAND_NAVY} !important;
+    font-weight: 700 !important;
+}}
+
+/* ── Subheaders — section dividers ── */
+[data-testid="stMarkdownContainer"] h3 {{
+    border-bottom: 2px solid {_BRAND_BORDER} !important;
+    padding-bottom: 6px !important;
+    margin-top: 1.5rem !important;
+}}
+
+/* ── Sliders and inputs ── */
+.stSlider [data-baseweb="slider"] div {{
+    font-family: {_FONT_CSS} !important;
+}}
+
+/* ── Professional card utility (landing / info blocks) ── */
+.prism-hero {{
+    background: linear-gradient(135deg, {_BRAND_NAVY} 0%, #1A3A6E 100%);
+    color: #FFFFFF;
+    border-radius: 10px;
+    padding: 36px 40px;
+    margin-bottom: 28px;
+    box-shadow: 0 4px 16px rgba(13,43,94,0.18);
+}}
+.prism-hero h1 {{
+    color: #FFFFFF !important;
+    font-size: 2rem !important;
+    margin: 0 0 8px 0 !important;
+    letter-spacing: -0.02em !important;
+}}
+.prism-hero p {{
+    color: rgba(255,255,255,0.88) !important;
+    font-size: 1.05rem !important;
+    margin: 0 !important;
+    line-height: 1.55 !important;
+}}
+.prism-card {{
+    background: {_BRAND_CARD};
+    border: 1px solid {_BRAND_BORDER};
+    border-radius: 8px;
+    padding: 20px 22px;
+    height: 100%;
+    box-shadow: 0 1px 4px rgba(13,43,94,0.05);
+}}
+.prism-card h4 {{
+    color: {_BRAND_NAVY} !important;
+    font-size: 13pt !important;
+    margin: 0 0 8px 0 !important;
+}}
+.prism-card p {{
+    color: {_BRAND_SLATE} !important;
+    font-size: 11pt !important;
+    line-height: 1.6 !important;
+    margin: 0 !important;
+}}
+.prism-step-pill {{
+    display: inline-block;
+    background: {_BRAND_NAVY};
+    color: #FFF;
+    font-size: 10pt;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 20px;
+    margin-bottom: 8px;
+}}
+.prism-workflow-step {{
+    text-align: center;
+    padding: 16px 8px;
+}}
+.prism-workflow-step .num {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: {_BRAND_NAVY};
+    color: #FFF;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 13pt;
+    margin-bottom: 8px;
+}}
+.prism-workflow-step .lbl {{
+    color: {_BRAND_NAVY};
+    font-weight: 600;
+    font-size: 11pt;
+}}
+.prism-workflow-step .sub {{
+    color: {_BRAND_MUTED};
+    font-size: 10pt;
+    margin-top: 4px;
+}}
+.prism-sidebar-badge {{
+    display: inline-block;
+    background: #E8EEF7;
+    color: {_BRAND_NAVY};
+    font-size: 9pt;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 4px;
+    margin-top: 6px;
+}}
+
 /* ── Divider ── */
 hr {{
     border-color: #DCE3EF !important;
@@ -250,8 +401,8 @@ hr {{
 
 
 MPL_STYLE = {
-    "font.family": "Tinos",
-    "font.serif": ["Times New Roman", "Tinos", "Times", "Liberation Serif", "DejaVu Serif"],
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Inter", "Segoe UI", "Arial", "DejaVu Sans"],
     "axes.titlecolor": "#0D2B5E",
     "axes.labelcolor": "#0D2B5E",
     "xtick.color": "#0D2B5E",
@@ -1054,14 +1205,13 @@ def build_excel_report():
 
 with st.sidebar:
     st.markdown(
-        "<h2 style='margin-bottom:0;font-size:22px;color:#0D2B5E;"
-        "font-family:Times New Roman,Tinos,Times,serif;font-weight:700;'>PRISM</h2>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<p style='font-size:12pt;color:#6B7A99;margin-top:2px;"
-        "font-family:Times New Roman,Tinos,Times,serif;'>"
-        "Performance Ranking via Integrated Sustainability Metrics</p>",
+        f"<div style='margin-bottom:4px;'>"
+        f"<span style='font-size:20px;font-weight:700;color:{_BRAND_NAVY};"
+        f"font-family:{_FONT_CSS};letter-spacing:-0.02em;'>PRISM</span></div>"
+        f"<p style='font-size:10pt;color:{_BRAND_MUTED};margin:0;line-height:1.4;"
+        f"font-family:{_FONT_CSS};'>Performance Ranking via Integrated "
+        f"Sustainability Metrics</p>"
+        f"<span class='prism-sidebar-badge'>MCDM Assessment Tool</span>",
         unsafe_allow_html=True,
     )
     st.divider()
@@ -1077,10 +1227,9 @@ with st.sidebar:
     step = st.session_state.step
     for section, steps in SECTIONS.items():
         st.markdown(
-            f"<p style='font-size:12pt;font-weight:700;color:#0D2B5E;"
-            f"text-transform:uppercase;letter-spacing:0.05em;"
-            f"font-family:Times New Roman,Tinos,Times,serif;margin:8px 0 2px 0;'>"
-            f"{section}</p>",
+            f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
+            f"text-transform:uppercase;letter-spacing:0.06em;"
+            f"font-family:{_FONT_CSS};margin:10px 0 4px 0;'>{section}</p>",
             unsafe_allow_html=True,
         )
         for s in steps:
@@ -1090,22 +1239,23 @@ with st.sidebar:
             short = label.split(". ", 1)[1] if ". " in label else label
             if s < step:
                 st.markdown(
-                    f"<p style='font-size:12pt;color:#16A34A;margin:1px 0;"
-                    f"font-family:Times New Roman,Tinos,Times,serif;'>✓ {short}</p>",
+                    f"<p style='font-size:10pt;color:#16A34A;margin:2px 0;"
+                    f"font-family:{_FONT_CSS};padding-left:4px;'>"
+                    f"<span style='font-weight:600;'>Done</span> &mdash; {short}</p>",
                     unsafe_allow_html=True,
                 )
             elif s == step:
                 st.markdown(
-                    f"<p style='font-size:12pt;font-weight:700;color:#0D2B5E;"
-                    f"background:#E8EEF7;padding:3px 8px;border-radius:4px;"
-                    f"border-left:3px solid #0D2B5E;margin:1px 0;"
-                    f"font-family:Times New Roman,Tinos,Times,serif;'>▶ {short}</p>",
+                    f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
+                    f"background:#E8EEF7;padding:6px 10px;border-radius:6px;"
+                    f"border-left:3px solid {_BRAND_NAVY};margin:2px 0;"
+                    f"font-family:{_FONT_CSS};'>{short}</p>",
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
-                    f"<p style='font-size:12pt;color:#9CA3AF;margin:1px 0;"
-                    f"font-family:Times New Roman,Tinos,Times,serif;'>○ {short}</p>",
+                    f"<p style='font-size:10pt;color:#9CA3AF;margin:2px 0;"
+                    f"font-family:{_FONT_CSS};padding-left:4px;'>{short}</p>",
                     unsafe_allow_html=True,
                 )
 
@@ -1119,7 +1269,7 @@ with st.sidebar:
                 excel_buf = build_excel_report()
                 fname = f"PRISM_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
                 st.download_button(
-                    label="📥 Download Excel report",
+                    label="Download Excel report",
                     data=excel_buf,
                     file_name=fname,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1149,52 +1299,103 @@ with st.sidebar:
 
 def landing_page():
     st.markdown(
-        "<h1 style='font-size:32px;font-weight:700;color:#0D2B5E;"
-        "font-family:Times New Roman,Tinos,Times,serif;margin-bottom:4px;'>"
-        "PRISM</h1>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<p style='font-size:16px;color:#4A5568;font-style:italic;"
-        "font-family:Times New Roman,Tinos,Times,serif;margin-bottom:24px;'>"
-        "Performance Ranking via Integrated Sustainability Metrics</p>",
+        f"<div class='prism-hero'>"
+        f"<h1>PRISM</h1>"
+        f"<p>Performance Ranking via Integrated Sustainability Metrics<br>"
+        f"Enterprise-grade multi-criteria decision support for manufacturing "
+        f"sustainability assessment</p></div>",
         unsafe_allow_html=True,
     )
 
-    st.markdown("---")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            "<div class='prism-card'>"
+            "<span class='prism-step-pill'>Ranking</span>"
+            "<h4>Multi-method MCDM aggregation</h4>"
+            "<p>TOPSIS, VIKOR, ELECTRE-Score, MULTIMOORA, and WASPAS "
+            "combined through the Performance Stability Index (PSI) "
+            "for robust compromise ranking.</p></div>",
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            "<div class='prism-card'>"
+            "<span class='prism-step-pill'>Validation</span>"
+            "<h4>Integrated robustness checks</h4>"
+            "<p>Seven validation modules covering weight sensitivity, "
+            "normalisation, Monte Carlo uncertainty, bootstrap stability, "
+            "and indicator-level propagation.</p></div>",
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            "<div class='prism-card'>"
+            "<span class='prism-step-pill'>Reporting</span>"
+            "<h4>Audit-ready outputs</h4>"
+            "<p>Structured Excel export of inputs, weights, rankings, "
+            "and validation results for internal review and "
+            "stakeholder communication.</p></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
     st.markdown(
-        "<h3 style='color:#0D2B5E;font-family:Times New Roman,Tinos,Times,serif;"
-        "font-weight:700;'>About PRISM</h3>",
+        f"<p style='font-size:11pt;font-weight:600;color:{_BRAND_NAVY};"
+        f"text-transform:uppercase;letter-spacing:0.05em;"
+        f"font-family:{_FONT_CSS};margin-bottom:12px;'>Assessment workflow</p>",
+        unsafe_allow_html=True,
+    )
+    w1, w2, w3, w4 = st.columns(4)
+    workflow = [
+        ("1", "Define", "Alternatives, categories, indicators"),
+        ("2", "Process", "MEREC, N2, category scores"),
+        ("3", "Aggregate", "RCW weights, MCDM, PSI ranking"),
+        ("4", "Validate", "Sensitivity and uncertainty analysis"),
+    ]
+    for col, (num, lbl, sub) in zip([w1, w2, w3, w4], workflow):
+        with col:
+            st.markdown(
+                f"<div class='prism-workflow-step'>"
+                f"<div class='num'>{num}</div>"
+                f"<div class='lbl'>{lbl}</div>"
+                f"<div class='sub'>{sub}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    st.markdown(
+        f"<h3 style='color:{_BRAND_NAVY};font-family:{_FONT_CSS};"
+        f"font-weight:600;margin-bottom:8px;'>About PRISM</h3>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
-        "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
+        f"<p style='font-size:11pt;line-height:1.75;color:#1A202C;"
+        f"font-family:{_FONT_CSS};'>"
         "PRISM is an integrated multi-criteria decision-making framework "
-        "developed for the comparative sustainability assessment of manufacturing "
-        "alternatives. It combines indicator-level weighting through the Method Based "
-        "on the Removal Effects of Criteria (MEREC), cross-category weight "
-        "consolidation via the Reciprocal Composite Weighting (RCW) method, and "
-        "a multi-method MCDM aggregation approach producing a final compromise "
-        "ranking through the Performance Stability Index (PSI).</p>",
+        "for the comparative sustainability assessment of manufacturing "
+        "alternatives. It combines indicator-level weighting through MEREC, "
+        "cross-category consolidation via Reciprocal Composite Weighting (RCW), "
+        "and multi-method MCDM aggregation producing a final compromise ranking "
+        "through the Performance Stability Index (PSI).</p>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-size:14px;line-height:1.8;color:#1A202C;"
-        "font-family:Times New Roman,Tinos,Times,serif;text-align:justify;'>"
-        "The framework evaluates alternatives across five sustainability dimensions: "
-        "Environmental, Economic, Social, Quality, and Productivity. "
-        "An integrated validation and analytics layer provides robustness "
-        "evidence and stakeholder-oriented sensitivity analysis.</p>",
+        f"<p style='font-size:11pt;line-height:1.75;color:{_BRAND_SLATE};"
+        f"font-family:{_FONT_CSS};'>"
+        "The framework evaluates alternatives across five sustainability "
+        "dimensions — Environmental, Economic, Social, Quality, and "
+        "Productivity — with an integrated validation and analytics layer "
+        "for robustness evidence and stakeholder-oriented sensitivity analysis.</p>",
         unsafe_allow_html=True,
     )
 
-    st.markdown("---")
-
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        if st.button("Begin Assessment →", type="primary",
+        if st.button("Begin assessment", type="primary",
                      use_container_width=True, key="start_btn"):
             st.session_state.step = 1
             st.rerun()
