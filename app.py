@@ -406,32 +406,27 @@ footer {{visibility: hidden;}}
 }}
 .prism-step-check {{
     flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
     border: 2px solid #CBD5E0;
     box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }}
 .prism-step-check.done {{
-    background: #16A34A;
+    background: #22C55E;
     border-color: #16A34A;
-    position: relative;
-}}
-.prism-step-check.done::after {{
-    content: "";
-    position: absolute;
-    left: 4px;
-    top: 1px;
-    width: 4px;
-    height: 8px;
-    border: solid #FFFFFF;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
+    color: #FFFFFF;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
 }}
 .prism-step-check.current {{
     border-color: {_BRAND_NAVY};
-    background: {_BRAND_NAVY};
-    box-shadow: inset 0 0 0 3px #E8EEF7;
+    background: #FFFFFF;
+    box-shadow: inset 0 0 0 2px {_BRAND_NAVY};
 }}
 .prism-step-check.pending {{
     background: #FFFFFF;
@@ -1312,18 +1307,21 @@ with st.sidebar:
             if s < step:
                 row_cls = "prism-step-row"
                 check_cls = "prism-step-check done"
+                check_mark = "&#10003;"
                 label_cls = "prism-step-label done"
             elif s == step:
                 row_cls = "prism-step-row current"
                 check_cls = "prism-step-check current"
+                check_mark = ""
                 label_cls = "prism-step-label current"
             else:
                 row_cls = "prism-step-row"
                 check_cls = "prism-step-check pending"
+                check_mark = ""
                 label_cls = "prism-step-label pending"
             st.markdown(
                 f"<div class='{row_cls}'>"
-                f"<span class='{check_cls}'></span>"
+                f"<span class='{check_cls}'>{check_mark}</span>"
                 f"<span class='{label_cls}'>{short}</span></div>",
                 unsafe_allow_html=True,
             )
