@@ -2007,7 +2007,7 @@ METHOD_DESCRIPTIONS = [
 
 
 def _render_method_descriptions_panel():
-    """Render method descriptions table (intro + dataframe)."""
+    """Render method descriptions as one tab per method with merged paragraphs."""
     st.markdown(
         "<p class='prism-about-body' style='font-family:Inter,sans-serif;"
         "font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:16px;'>"
@@ -2016,11 +2016,20 @@ def _render_method_descriptions_panel():
         "</p>",
         unsafe_allow_html=True,
     )
-    st.dataframe(
-        pd.DataFrame(METHOD_DESCRIPTIONS),
-        use_container_width=True,
-        hide_index=True,
-    )
+    tabs = st.tabs([m["Method"] for m in METHOD_DESCRIPTIONS])
+    for tab, method in zip(tabs, METHOD_DESCRIPTIONS):
+        with tab:
+            stage = method["Stage"]
+            desc = method["Plain-language description"]
+            role = method["Role in PRISM"]
+            st.markdown(
+                f"<p class='prism-about-body' style='font-family:Inter,sans-serif;"
+                f"font-size:11pt;line-height:1.75;color:#1A202C;'>"
+                f"During <strong>{stage}</strong>, {desc} "
+                f"In PRISM, {role[0].lower() + role[1:] if role else role}."
+                f"</p>",
+                unsafe_allow_html=True,
+            )
 
 
 def method_descriptions_page():
@@ -2045,11 +2054,16 @@ def how_to_use_page():
         unsafe_allow_html=True,
     )
 
-    guide_rows = [
-        {"Steps": s, "Phase": phase, "What to do": action}
-        for s, phase, action in HOW_TO_USE_STEPS
-    ]
-    st.dataframe(pd.DataFrame(guide_rows), use_container_width=True, hide_index=True)
+    for s, phase, action in HOW_TO_USE_STEPS:
+        step_label = f"Steps {s}" if "–" in s or "-" in s else f"Step {s}"
+        st.markdown(f"#### {step_label} — {phase}")
+        st.markdown(
+            f"<p class='prism-about-body' style='font-family:Inter,sans-serif;"
+            f"font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:12px;'>"
+            f"In the <strong>{phase}</strong> phase ({step_label}), {action}"
+            f"</p>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown(
         "<div class='prism-about-panel' style='margin-top:16px;'>"
