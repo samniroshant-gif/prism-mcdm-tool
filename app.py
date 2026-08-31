@@ -1921,7 +1921,7 @@ HOW_TO_USE_STEPS = [
     ("12", "Results", "Compare MCDM rankings, PSI compromise scores, and category-combination sensitivity."),
     ("13", "Validation (optional)", "Run robustness checks — weight sensitivity, normalisation, Monte Carlo, bootstrap, and more."),
     ("14", "Analytics (optional)", "Contribution analysis, leave-one-out tests, and stakeholder preference simulation."),
-    ("15", "Decision support", "Review the recommended winner with structured strengths and weaknesses tables."),
+    ("15", "Decision support", "Review the recommended winner with structured strengths and weaknesses tables, then download the full Excel report (Steps 1–15)."),
 ]
 
 METHOD_DESCRIPTIONS = [
@@ -2068,6 +2068,50 @@ def how_to_use_page():
         st.rerun()
 
 
+def _write_df_to_sheet(ws, df, start_row, hdr_font, hdr_fill, hdr_align, body_font, body_align, border):
+    """Write a pandas DataFrame to a worksheet with header styling."""
+    headers = list(df.columns)
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(start_row, ci, h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = hdr_align
+        cell.border = border
+    for ri, row in enumerate(df.itertuples(index=False), start=start_row + 1):
+        for ci, val in enumerate(row, 1):
+            cell = ws.cell(ri, ci, val if val is not None else "")
+            cell.font = body_font
+            cell.alignment = body_align
+            cell.border = border
+    return start_row + len(df)
+
+
+def _render_excel_download_button(key_suffix=""):
+    """Render Step 15 full-workbook download button."""
+    key = f"excel_download_{key_suffix}" if key_suffix else "excel_download"
+    if not OPENPYXL_OK:
+        st.caption("Install openpyxl to enable Excel export.")
+        return
+    if not st.session_state.get("last_method_ranks"):
+        st.info("Complete Step 12 first to generate the full Excel report.")
+        return
+    try:
+        excel_buf = build_excel_report()
+        fname = f"PRISM_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        st.download_button(
+            label="Download full Excel report (Steps 1–15)",
+            data=excel_buf,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True,
+            key=key,
+            help="Export inputs, processing, rankings, validation, analytics, and decision support.",
+        )
+    except Exception as e:
+        st.error(f"Report error: {e}")
+
+
 def build_excel_report():
     """Build a full Excel report from current session state."""
     wb = openpyxl.Workbook()
@@ -2171,6 +2215,58 @@ def build_excel_report():
             row += 1
     auto_width(ws2)
 
+    # ── Sheet: Step 6 Correlation ─────────────────────────────────────────────
+    ws_corr = wb.create_sheet("6. Correlation")
+    add_title(ws_corr, "Step 6 — Within-category Spearman correlation")
+    corr_row = 3
+    flagged_rows = []
+    for ckey in ordered_sel_cats():
+        ind_names, _, _ = get_full_indicators(ckey)
+        n_ind = len(ind_names)
+        if n_ind < 2 or n_proc < 3:
+            continue
+        raw = np.zeros((n_ind, n_proc))
+        for j in range(n_ind):
+            for pi in range(n_proc):
+                raw[j, pi] = ss.indicator_values.get((ckey, j, pi), 0.0)
+        corr_mat = np.eye(n_ind)
+        for a in range(n_ind):
+            for b in range(n_ind):
+                if a == b:
+                    continue
+                rho, _ = spearmanr(raw[a], raw[b])
+                corr_mat[a, b] = rho if not np.isnan(rho) else 0.0
+        df_corr = pd.DataFrame(corr_mat, index=ind_names, columns=ind_names).round(3)
+        ws_corr.cell(corr_row, 1, CATS[ckey]["label"]).font = Font(
+            name="Times New Roman", bold=True, size=11, color="0D2B5E",
+        )
+        corr_row += 1
+        corr_row = _write_df_to_sheet(
+            ws_corr, df_corr.reset_index().rename(columns={"index": "Indicator"}),
+            corr_row, HDR_FONT, HDR_FILL, HDR_ALIGN, BODY_FONT, BODY_ALIGN, BORDER,
+        ) + 2
+        for a in range(n_ind):
+            for b in range(a + 1, n_ind):
+                if abs(corr_mat[a, b]) > 0.8:
+                    flagged_rows.append({
+                        "Category": CATS[ckey]["label"],
+                        "Indicator A": ind_names[a],
+                        "Indicator B": ind_names[b],
+                        "Spearman rho": round(float(corr_mat[a, b]), 3),
+                    })
+    if flagged_rows:
+        ws_corr.cell(corr_row, 1, "Highly correlated pairs (|rho| > 0.8)").font = Font(
+            name="Times New Roman", bold=True, size=11, color="0D2B5E",
+        )
+        corr_row += 1
+        _write_df_to_sheet(
+            ws_corr, pd.DataFrame(flagged_rows), corr_row,
+            HDR_FONT, HDR_FILL, HDR_ALIGN, BODY_FONT, BODY_ALIGN, BORDER,
+        )
+    elif corr_row == 3:
+        ws_corr.cell(3, 1, "No correlation analysis (insufficient indicators or alternatives).").font = BODY_FONT
+    auto_width(ws_corr)
+
     # ── Sheet 3: MEREC Weights ────────────────────────────────────────────────
     if hasattr(ss, "merec_w") and ss.merec_w:
         ws3 = wb.create_sheet("3. MEREC Weights")
@@ -2234,7 +2330,7 @@ def build_excel_report():
     methods = list(ss.sel_mcdm_methods) or ALL_MCDM_KEYS
     mr = ss.get("last_method_ranks", {})
     if mr:
-        ws6 = wb.create_sheet("6. MCDM Results")
+        ws6 = wb.create_sheet("12. MCDM Results")
         add_title(ws6, "MCDM Rankings and PSI Compromise Rank")
         headers = ["Alternative"] + [METHOD_LABELS[m] for m in methods]
         if len(methods) > 1:
@@ -2264,7 +2360,7 @@ def build_excel_report():
 
     # ── Sheet 7: PSI Curve Data ───────────────────────────────────────────────
     if mr and len(methods) > 1:
-        ws7 = wb.create_sheet("7. PSI Curve Data")
+        ws7 = wb.create_sheet("12. PSI Curve Data")
         add_title(ws7, "PSI Score vs p Value")
         headers = ["p value"] + names
         for ci, h in enumerate(headers, 1):
@@ -2280,6 +2376,124 @@ def build_excel_report():
                 ws7.cell(ri, 2 + pi, round(float(psi_p[pi]), 4)).font = BODY_FONT
             style_body(ws7, ri, len(headers))
         auto_width(ws7)
+
+    # ── Sheet: Step 13 Validation ─────────────────────────────────────────────
+    if mr:
+        if not ss.get("validation_dashboard_results"):
+            compute_sensitivity_dashboard(force=False)
+        dashboard = ss.get("validation_dashboard_results")
+        ws13 = wb.create_sheet("13. Validation")
+        add_title(ws13, "Step 13 — Sensitivity validation dashboard")
+        row_v = 3
+        if dashboard:
+            summary_rows = [
+                ("Recommended winner", dashboard.get("winner_name", "")),
+                ("Winner basis", dashboard.get("winner_basis", "")),
+                ("Robust checks passed", f"{dashboard.get('robust_count', 0)} of {dashboard.get('scored_count', 0)}"),
+                ("Overall status", dashboard.get("overall_label", "")),
+            ]
+            for k, v in summary_rows:
+                ws13.cell(row_v, 1, k).font = Font(name="Times New Roman", bold=True, size=10)
+                ws13.cell(row_v, 2, str(v)).font = BODY_FONT
+                row_v += 1
+            row_v += 1
+            check_rows = []
+            for check in dashboard.get("checks", []):
+                metric = check.get("metric_pct")
+                check_rows.append({
+                    "Check": check.get("name", ""),
+                    "Status": check.get("status_label", check.get("status", "")),
+                    "Detail": check.get("detail", ""),
+                    "Metric (%)": round(float(metric), 1) if metric is not None else "",
+                })
+            if check_rows:
+                row_v = _write_df_to_sheet(
+                    ws13, pd.DataFrame(check_rows), row_v,
+                    HDR_FONT, HDR_FILL, HDR_ALIGN, BODY_FONT, BODY_ALIGN, BORDER,
+                ) + 1
+            if dashboard.get("summary"):
+                ws13.cell(row_v, 1, "Summary").font = Font(name="Times New Roman", bold=True, size=10)
+                ws13.cell(row_v + 1, 1, dashboard["summary"]).font = BODY_FONT
+        else:
+            ws13.cell(3, 1, "Validation dashboard not available.").font = BODY_FONT
+        auto_width(ws13)
+
+    # ── Sheet: Step 14 Analytics ──────────────────────────────────────────────
+    analytics_parts = []
+    cat_contrib = ss.get("export_cat_contrib")
+    if cat_contrib is not None and not getattr(cat_contrib, "empty", True):
+        analytics_parts.append(("Contribution analysis", cat_contrib))
+    stakeholder = ss.get("export_stakeholder")
+    if stakeholder is not None and not getattr(stakeholder, "empty", True):
+        analytics_parts.append(("Stakeholder preference simulation", stakeholder))
+    if analytics_parts or mr:
+        ws14 = wb.create_sheet("14. Analytics")
+        add_title(ws14, "Step 14 — Analytics (optional)")
+        row_a = 3
+        if analytics_parts:
+            for title, df in analytics_parts:
+                ws14.cell(row_a, 1, title).font = Font(
+                    name="Times New Roman", bold=True, size=11, color="0D2B5E",
+                )
+                row_a += 1
+                row_a = _write_df_to_sheet(
+                    ws14, df, row_a,
+                    HDR_FONT, HDR_FILL, HDR_ALIGN, BODY_FONT, BODY_ALIGN, BORDER,
+                ) + 2
+        else:
+            ws14.cell(3, 1, "No analytics tools were run in this session.").font = BODY_FONT
+        auto_width(ws14)
+
+    # ── Sheet: Step 15 Decision Support ───────────────────────────────────────
+    if mr:
+        methods_ds = list(ss.sel_mcdm_methods) or list(mr.keys())
+        winner_info = _resolve_overall_winner(names, mr, methods_ds)
+        summary, strengths, weaknesses, profile = _build_decision_support_tables(winner_info)
+        dci = _compute_decision_confidence_index(winner_info)
+        ws15 = wb.create_sheet("15. Decision Support")
+        add_title(ws15, "Step 15 — Decision support")
+        row_d = 3
+        if dci.get("score") is not None:
+            dci_rows = [
+                ("Decision Confidence Index", f"{dci['score']}/100"),
+                ("Confidence label", dci.get("label", "")),
+                ("Summary", dci.get("summary", "")),
+            ]
+            for k, v in dci_rows:
+                ws15.cell(row_d, 1, k).font = Font(name="Times New Roman", bold=True, size=10)
+                ws15.cell(row_d, 2, str(v)).font = BODY_FONT
+                row_d += 1
+            if dci.get("components"):
+                row_d += 1
+                comp_df = pd.DataFrame([
+                    {"Component": c["name"], "Score": c["value"], "Detail": c["source"]}
+                    for c in dci["components"]
+                ])
+                row_d = _write_df_to_sheet(
+                    ws15, comp_df, row_d,
+                    HDR_FONT, HDR_FILL, HDR_ALIGN, BODY_FONT, BODY_ALIGN, BORDER,
+                ) + 2
+        else:
+            ws15.cell(row_d, 1, dci.get("summary", "Insufficient validation data for confidence score.")).font = BODY_FONT
+            row_d += 2
+        sections = [
+            ("Overall recommendation", pd.DataFrame(summary)),
+            ("Strengths", pd.DataFrame(strengths)),
+            ("Weaknesses", pd.DataFrame(weaknesses)),
+            ("Category score profile", pd.DataFrame(profile)),
+        ]
+        for title, df in sections:
+            if df.empty:
+                continue
+            ws15.cell(row_d, 1, title).font = Font(
+                name="Times New Roman", bold=True, size=11, color="0D2B5E",
+            )
+            row_d += 1
+            row_d = _write_df_to_sheet(
+                ws15, df, row_d,
+                HDR_FONT, HDR_FILL, HDR_ALIGN, BODY_FONT, BODY_ALIGN, BORDER,
+            ) + 2
+        auto_width(ws15)
 
     # Finalise
     buf = io.BytesIO()
@@ -2415,34 +2629,6 @@ with st.sidebar:
 
     st.divider()
 
-    # Download report — always accessible
-    if OPENPYXL_OK:
-        mr_ready = bool(st.session_state.get("last_method_ranks", {}))
-        if mr_ready:
-            try:
-                excel_buf = build_excel_report()
-                fname = f"PRISM_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-                st.download_button(
-                    label="Download Excel report",
-                    data=excel_buf,
-                    file_name=fname,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    help="Export inputs, weights, rankings, and validation results to Excel.",
-                )
-            except Exception as e:
-                st.caption(f"Report error: {e}")
-        else:
-            st.markdown(
-                "<p style='font-size:11px;color:#9CA3AF;text-align:center;"
-                "font-family:Times New Roman,serif;'>"
-                "Run through Step 12 to enable report download.</p>",
-                unsafe_allow_html=True,
-            )
-    else:
-        st.caption("Install openpyxl to enable Excel export.")
-
-    st.divider()
     if st.button("Reset", use_container_width=True,
                  help="Clear all session data and restart from the landing page."):
         reset_all()
@@ -2487,8 +2673,8 @@ def landing_page():
             "<div class='prism-card'>"
             "<span class='prism-step-pill'>Reporting</span>"
             "<h4>Audit-ready outputs</h4>"
-            "<p>Structured Excel export of inputs, weights, rankings, "
-            "and validation results for internal review and "
+            "<p>Download a full Excel workbook at Step 15 covering inputs, "
+            "weights, rankings, validation, and decision support for "
             "stakeholder communication.</p></div>",
             unsafe_allow_html=True,
         )
@@ -6683,6 +6869,14 @@ def step15():
 
     st.subheader("Category score profile")
     st.dataframe(pd.DataFrame(profile), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Full assessment report")
+    st.caption(
+        "Download a single Excel workbook with data from all workflow steps "
+        "(inputs, processing, results, validation, analytics, and decision support)."
+    )
+    _render_excel_download_button(key_suffix="step15")
 
     st.divider()
     c1, c2, c3, c4 = st.columns(4)
