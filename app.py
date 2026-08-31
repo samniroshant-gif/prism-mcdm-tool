@@ -16,11 +16,8 @@ Run with:  streamlit run app.py
 """
 
 import itertools
-import json
 import os
 import base64
-import secrets as pysecrets
-import uuid
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -41,12 +38,6 @@ try:
 except ImportError:
     OPENPYXL_OK = False
 from scipy.stats import spearmanr
-
-try:
-    from supabase import create_client
-    SUPABASE_PKG_OK = True
-except ImportError:
-    SUPABASE_PKG_OK = False
 
 st.set_page_config(
     page_title="PRISM | Sustainability MCDM Assessment",
@@ -1795,13 +1786,6 @@ def init_state():
         "outliers_acknowledged": False,
         "validation_choice": "None - skip validation",
         "disabled_indicators": set(),  # set of (ckey, j) tuples
-        "current_assessment_id": None,
-        "assessment_name": "",
-        "share_code": "",
-        "owner_label": "",
-        "collaborator_mode": False,
-        "assigned_categories": set(),
-        "last_remote_updated_at": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1812,669 +1796,6 @@ def reset_all():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     init_state()
-
-
-# ============================================================================
-# ASSESSMENT PERSISTENCE (serialize / Supabase / JSON fallback)
-# ============================================================================
-
-ASSESSMENT_SCHEMA_VERSION = 1
-
-PERSIST_KEYS = [
-    "step", "n_proc", "proc_names", "sel_cats", "sel_units",
-    "indicator_values", "use_custom_indicators", "custom_indicator_counts",
-    "custom_indicators", "l3_cats", "sel_weight_methods", "sel_mcdm_methods",
-    "disabled_indicators", "corr_acknowledged", "validation_choice",
-    "cat_scores", "nm_data", "n2_data", "merec_w", "final_cat_weights",
-    "last_method_ranks", "last_psi_scores", "last_psi_combo_scores",
-    "last_psi_combo_ranks", "computed",
-]
-
-SET_STATE_KEYS = {
-    "sel_cats", "l3_cats", "sel_weight_methods", "sel_mcdm_methods",
-    "disabled_indicators", "assigned_categories",
-}
-TUPLE_PAIR_KEYS = {"disabled_indicators", "custom_indicators"}
-TUPLE_TRIPLE_KEYS = {"indicator_values"}
-
-WIDGET_KEY_PREFIXES = (
-    "editor_", "editor_seed_", "pname_", "catchk_", "l3chk_", "wmchk_",
-    "mmchk_", "unitsel_", "unitcustom_", "ind_enabled_", "customcnt_",
-    "custname_", "custunit_", "custben_", "use_custom_radio", "n_proc_slider",
-)
-
-
-def _encode_key(key):
-    if isinstance(key, tuple):
-        return "|".join(str(p) for p in key)
-    return key
-
-
-def _decode_key(key_str, n_parts):
-    parts = key_str.split("|")
-    if n_parts == 2:
-        return parts[0], int(parts[1])
-    if n_parts == 3:
-        return parts[0], int(parts[1]), int(parts[2])
-    return key_str
-
-
-def _to_json_safe(value, state_key=None):
-    if isinstance(value, set):
-        items = []
-        for item in value:
-            if isinstance(item, tuple):
-                items.append(_encode_key(item))
-            else:
-                items.append(item)
-        return {"__type__": "set", "items": items}
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            ek = _encode_key(k) if isinstance(k, tuple) else k
-            out[ek] = _to_json_safe(v, state_key)
-        return out
-    if isinstance(value, np.ndarray):
-        return {"__type__": "ndarray", "data": value.tolist()}
-    if isinstance(value, (np.integer, np.floating)):
-        return float(value) if isinstance(value, np.floating) else int(value)
-    if isinstance(value, (list, tuple)):
-        return [_to_json_safe(v, state_key) for v in value]
-    return value
-
-
-def _from_json_safe(value, state_key=None):
-    if isinstance(value, dict):
-        if value.get("__type__") == "set":
-            items = value.get("items", [])
-            decoded = []
-            for item in items:
-                if state_key in TUPLE_PAIR_KEYS and isinstance(item, str) and "|" in item:
-                    decoded.append(_decode_key(item, 2))
-                elif state_key in TUPLE_TRIPLE_KEYS and isinstance(item, str) and item.count("|") == 2:
-                    decoded.append(_decode_key(item, 3))
-                elif state_key == "custom_indicators" and isinstance(item, str) and "|" in item:
-                    decoded.append(_decode_key(item, 2))
-                else:
-                    decoded.append(item)
-            return set(decoded)
-        if value.get("__type__") == "ndarray":
-            return np.array(value.get("data", []), dtype=float)
-        out = {}
-        for k, v in value.items():
-            if state_key in TUPLE_PAIR_KEYS and isinstance(k, str) and "|" in k:
-                dk = _decode_key(k, 2)
-            elif state_key in TUPLE_TRIPLE_KEYS and isinstance(k, str) and k.count("|") == 2:
-                dk = _decode_key(k, 3)
-            elif state_key == "custom_indicators" and isinstance(k, str) and "|" in k:
-                dk = _decode_key(k, 2)
-            else:
-                dk = k
-            out[dk] = _from_json_safe(v, state_key)
-        return out
-    if isinstance(value, list):
-        return [_from_json_safe(v, state_key) for v in value]
-    return value
-
-
-def _clear_widget_state():
-    for key in list(st.session_state.keys()):
-        if any(key.startswith(p) for p in WIDGET_KEY_PREFIXES):
-            del st.session_state[key]
-
-
-def _rebuild_editor_seeds():
-    names = st.session_state.get("proc_names") or []
-    for ckey in ordered_sel_cats():
-        ind_names, ind_units, _ = get_full_indicators(ckey)
-        rows = [f"{ind_names[j]} ({ind_units[j]})" for j in range(len(ind_names))]
-        seed = [
-            [st.session_state.indicator_values.get((ckey, j, pi), 0.0)
-             for pi in range(len(names))]
-            for j in range(len(ind_names))
-        ]
-        st.session_state[f"editor_seed_{ckey}"] = pd.DataFrame(
-            seed, index=rows, columns=names,
-        )
-
-
-def serialize_assessment(name=None):
-    state = {}
-    for k in PERSIST_KEYS:
-        if k in st.session_state:
-            state[k] = _to_json_safe(st.session_state[k], k)
-    return {
-        "schema_version": ASSESSMENT_SCHEMA_VERSION,
-        "assessment_name": name or st.session_state.get("assessment_name") or "Untitled",
-        "saved_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "state": state,
-    }
-
-
-def deserialize_assessment(payload):
-    _clear_widget_state()
-    inner = payload.get("state", payload)
-    for k, v in inner.items():
-        if k in PERSIST_KEYS or k in (
-            "current_assessment_id", "assessment_name", "share_code",
-            "owner_label", "collaborator_mode", "assigned_categories",
-        ):
-            st.session_state[k] = _from_json_safe(v, k)
-    if payload.get("assessment_name"):
-        st.session_state.assessment_name = payload["assessment_name"]
-    _rebuild_editor_seeds()
-
-
-def assessment_to_json_bytes(name=None):
-    return json.dumps(serialize_assessment(name=name), indent=2).encode("utf-8")
-
-
-def load_assessment_from_json_bytes(raw):
-    payload = json.loads(raw.decode("utf-8"))
-    deserialize_assessment(payload)
-    st.session_state.current_assessment_id = None
-    st.session_state.share_code = ""
-    st.session_state.collaborator_mode = False
-    st.session_state.assigned_categories = set()
-
-
-def _supabase_config():
-    url = key = None
-    try:
-        url = st.secrets.get("SUPABASE_URL")
-        key = st.secrets.get("SUPABASE_KEY")
-    except Exception:
-        pass
-    url = url or os.environ.get("SUPABASE_URL")
-    key = key or os.environ.get("SUPABASE_KEY")
-    return url, key
-
-
-def supabase_available():
-    url, key = _supabase_config()
-    return SUPABASE_PKG_OK and bool(url) and bool(key)
-
-
-def _get_supabase_client():
-    if not supabase_available():
-        return None
-    url, key = _supabase_config()
-    try:
-        return create_client(url, key)
-    except Exception:
-        return None
-
-
-def _generate_share_code():
-    return pysecrets.token_hex(4).upper()
-
-
-def list_cloud_assessments():
-    client = _get_supabase_client()
-    if not client:
-        return []
-    try:
-        resp = (
-            client.table("assessments")
-            .select("id,name,share_code,updated_at,status,owner_label")
-            .order("updated_at", desc=True)
-            .execute()
-        )
-        return resp.data or []
-    except Exception:
-        return []
-
-
-def fetch_assessment_by_id(assessment_id):
-    client = _get_supabase_client()
-    if not client:
-        return None
-    try:
-        resp = (
-            client.table("assessments")
-            .select("*")
-            .eq("id", assessment_id)
-            .limit(1)
-            .execute()
-        )
-        rows = resp.data or []
-        return rows[0] if rows else None
-    except Exception:
-        return None
-
-
-def fetch_assessment_by_share_code(share_code):
-    client = _get_supabase_client()
-    if not client:
-        return None
-    try:
-        resp = (
-            client.table("assessments")
-            .select("*")
-            .eq("share_code", share_code.strip().upper())
-            .limit(1)
-            .execute()
-        )
-        rows = resp.data or []
-        return rows[0] if rows else None
-    except Exception:
-        return None
-
-
-def save_assessment_to_cloud(name, owner_label="", assessment_id=None):
-    client = _get_supabase_client()
-    if not client:
-        return None, "Supabase not configured"
-    payload = serialize_assessment(name=name)
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    share_code = st.session_state.get("share_code") or _generate_share_code()
-    owner_label = owner_label or st.session_state.get("owner_label") or "Lead"
-    status = "complete" if st.session_state.get("last_method_ranks") else "in_progress"
-    row = {
-        "name": name,
-        "owner_label": owner_label,
-        "state_json": payload,
-        "status": status,
-        "updated_at": now,
-        "share_code": share_code,
-    }
-    try:
-        if assessment_id:
-            existing = fetch_assessment_by_id(assessment_id)
-            if existing and st.session_state.get("last_remote_updated_at"):
-                if existing.get("updated_at") != st.session_state.last_remote_updated_at:
-                    return None, "Another user saved since you loaded this assessment. Reload and merge."
-            resp = client.table("assessments").update(row).eq("id", assessment_id).execute()
-            saved = (resp.data or [{}])[0]
-        else:
-            row["id"] = str(uuid.uuid4())
-            row["created_at"] = now
-            resp = client.table("assessments").insert(row).execute()
-            saved = (resp.data or [{}])[0]
-        st.session_state.current_assessment_id = saved.get("id")
-        st.session_state.assessment_name = name
-        st.session_state.share_code = saved.get("share_code", share_code)
-        st.session_state.owner_label = owner_label
-        st.session_state.last_remote_updated_at = saved.get("updated_at")
-        return saved, None
-    except Exception as exc:
-        return None, str(exc)
-
-
-def load_assessment_from_cloud(assessment_id=None, share_code=None):
-    row = None
-    if assessment_id:
-        row = fetch_assessment_by_id(assessment_id)
-    elif share_code:
-        row = fetch_assessment_by_share_code(share_code)
-    if not row:
-        return False, "Assessment not found"
-    state_json = row.get("state_json") or {}
-    deserialize_assessment(state_json)
-    st.session_state.current_assessment_id = row.get("id")
-    st.session_state.assessment_name = row.get("name", "")
-    st.session_state.share_code = row.get("share_code", "")
-    st.session_state.owner_label = row.get("owner_label", "")
-    st.session_state.last_remote_updated_at = row.get("updated_at")
-    return True, None
-
-
-def save_collaborator_category_merge(assessment_id, assigned_categories):
-    client = _get_supabase_client()
-    if not client:
-        return None, "Supabase not configured"
-    row = fetch_assessment_by_id(assessment_id)
-    if not row:
-        return None, "Assessment not found"
-    remote_payload = row.get("state_json") or {}
-    remote_state = remote_payload.get("state", {})
-    local_iv = st.session_state.indicator_values
-    remote_iv_raw = remote_state.get("indicator_values", {})
-    remote_iv = _from_json_safe(remote_iv_raw, "indicator_values")
-    if not isinstance(remote_iv, dict):
-        remote_iv = {}
-    for ckey in assigned_categories:
-        for key, val in local_iv.items():
-            if isinstance(key, tuple) and key[0] == ckey:
-                remote_iv[key] = val
-    remote_state["indicator_values"] = _to_json_safe(remote_iv, "indicator_values")
-    remote_payload["state"] = remote_state
-    remote_payload["saved_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    try:
-        resp = (
-            client.table("assessments")
-            .update({"state_json": remote_payload, "updated_at": now, "status": "in_progress"})
-            .eq("id", assessment_id)
-            .execute()
-        )
-        saved = (resp.data or [{}])[0]
-        st.session_state.last_remote_updated_at = saved.get("updated_at")
-        return saved, None
-    except Exception as exc:
-        return None, str(exc)
-
-
-def list_category_assignments(assessment_id):
-    client = _get_supabase_client()
-    if not client:
-        return []
-    try:
-        resp = (
-            client.table("category_assignments")
-            .select("*")
-            .eq("assessment_id", assessment_id)
-            .execute()
-        )
-        return resp.data or []
-    except Exception:
-        return []
-
-
-def upsert_category_assignment(assessment_id, category_key, assignee_name, status="pending"):
-    client = _get_supabase_client()
-    if not client:
-        return False
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    row = {
-        "assessment_id": assessment_id,
-        "category_key": category_key,
-        "assignee_name": assignee_name,
-        "status": status,
-        "updated_at": now,
-    }
-    try:
-        existing = [
-            a for a in list_category_assignments(assessment_id)
-            if a.get("category_key") == category_key
-        ]
-        if existing:
-            client.table("category_assignments").update(row).eq("id", existing[0]["id"]).execute()
-        else:
-            row["id"] = str(uuid.uuid4())
-            client.table("category_assignments").insert(row).execute()
-        return True
-    except Exception:
-        return False
-
-
-def ordered_sel_cats_for_editing():
-    if st.session_state.get("collaborator_mode") and st.session_state.get("assigned_categories"):
-        assigned = st.session_state.assigned_categories
-        return [c for c in ordered_sel_cats() if c in assigned]
-    return ordered_sel_cats()
-
-
-def _ranks_from_snapshot(state_dict):
-    names = state_dict.get("proc_names") or []
-    method_ranks_raw = state_dict.get("last_method_ranks") or {}
-    method_ranks = _from_json_safe(method_ranks_raw, "last_method_ranks")
-    methods_raw = state_dict.get("sel_mcdm_methods") or []
-    methods = _from_json_safe(methods_raw, "sel_mcdm_methods")
-    if isinstance(methods, set):
-        methods = list(methods)
-    if not methods:
-        methods = list(method_ranks.keys()) if method_ranks else list(ALL_MCDM_KEYS)
-    methods = [m for m in methods if m in method_ranks] or list(method_ranks.keys())
-    psi_raw = state_dict.get("last_psi_scores")
-    psi_scores = _from_json_safe(psi_raw) if psi_raw else None
-    if psi_scores is not None and len(methods) > 1:
-        psi_arr = np.array(psi_scores, dtype=float)
-        psi_ranks = rank_with_ties(psi_arr, ascending=False)
-    elif method_ranks and methods:
-        m0 = methods[0]
-        ranks = np.array(method_ranks.get(m0, []), dtype=float)
-        psi_ranks = rank_with_ties(ranks, ascending=True) if len(ranks) else np.array([])
-        psi_arr = ranks
-    else:
-        psi_ranks = np.array([])
-        psi_arr = np.array([])
-    return names, methods, method_ranks, psi_arr, psi_ranks
-
-
-def render_assessments_sidebar():
-    st.markdown(
-        f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
-        f"text-transform:uppercase;letter-spacing:0.06em;"
-        f"font-family:{_FONT_CSS};margin:0 0 8px 0;'>Assessments</p>",
-        unsafe_allow_html=True,
-    )
-    if supabase_available():
-        st.caption("Cloud save connected")
-    else:
-        st.caption("Cloud save offline — use JSON export/import")
-
-    cur_name = st.session_state.get("assessment_name") or "Untitled"
-    if st.session_state.get("current_assessment_id"):
-        st.markdown(f"**Current:** {cur_name}")
-        if st.session_state.get("share_code"):
-            st.code(st.session_state.share_code, language=None)
-
-    if st.button("New assessment", use_container_width=True, key="assess_new",
-                 help="Start a fresh assessment (clears current session)."):
-        reset_all()
-        st.rerun()
-
-    owner = st.text_input("Your name (lead)", value=st.session_state.get("owner_label") or "",
-                          key="assess_owner_label", placeholder="e.g. Sam")
-    save_name = st.text_input("Assessment name", value=cur_name, key="assess_save_name")
-
-    sc1, sc2 = st.columns(2)
-    with sc1:
-        if st.button("Save", use_container_width=True, key="assess_save",
-                     help="Save to cloud (or update current assessment)."):
-            st.session_state.owner_label = owner.strip() or "Lead"
-            if supabase_available():
-                aid = st.session_state.get("current_assessment_id")
-                saved, err = save_assessment_to_cloud(
-                    save_name.strip() or "Untitled",
-                    owner_label=st.session_state.owner_label,
-                    assessment_id=aid,
-                )
-                if err:
-                    st.error(err)
-                else:
-                    st.success("Saved to cloud.")
-            else:
-                st.session_state.assessment_name = save_name.strip() or "Untitled"
-                st.info("Use Export JSON below (cloud not configured).")
-    with sc2:
-        st.download_button(
-            "Export JSON",
-            data=assessment_to_json_bytes(save_name.strip() or cur_name),
-            file_name=f"PRISM_{save_name.strip() or 'assessment'}.json",
-            mime="application/json",
-            use_container_width=True,
-            key="assess_export_json",
-            help="Download assessment snapshot for offline backup.",
-        )
-
-    uploaded = st.file_uploader("Import JSON", type=["json"], key="assess_import_json",
-                                help="Load a previously exported assessment file.")
-    if uploaded is not None:
-        if st.button("Load imported file", key="assess_import_btn", use_container_width=True):
-            try:
-                load_assessment_from_json_bytes(uploaded.getvalue())
-                st.success("Assessment imported.")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Import failed: {exc}")
-
-    if supabase_available():
-        cloud_list = list_cloud_assessments()
-        if cloud_list:
-            options = {f"{r['name']} ({r['updated_at'][:10]})": r["id"] for r in cloud_list}
-            pick = st.selectbox("Load saved assessment", ["— select —"] + list(options.keys()),
-                                key="assess_load_pick")
-            if pick != "— select —" and st.button("Load", key="assess_load_btn", use_container_width=True):
-                ok, err = load_assessment_from_cloud(assessment_id=options[pick])
-                if ok:
-                    st.session_state.collaborator_mode = False
-                    st.session_state.assigned_categories = set()
-                    st.success(f"Loaded {pick.split(' (')[0]}.")
-                    st.rerun()
-                else:
-                    st.error(err or "Load failed")
-
-        with st.expander("Join shared assessment"):
-            join_code = st.text_input("Share code", key="assess_join_code", placeholder="8-char code")
-            join_name = st.text_input("Your name", key="assess_join_name", placeholder="Your name")
-            join_cats = st.multiselect(
-                "Your category(ies)",
-                options=CATEGORY_ORDER,
-                format_func=lambda k: CATS[k]["label"],
-                key="assess_join_cats",
-                help="Categories you will enter data for.",
-            )
-            if st.button("Join & edit Step 5", key="assess_join_btn", use_container_width=True):
-                if not join_code.strip():
-                    st.error("Enter a share code.")
-                elif not join_name.strip():
-                    st.error("Enter your name.")
-                elif not join_cats:
-                    st.error("Select at least one category.")
-                else:
-                    ok, err = load_assessment_from_cloud(share_code=join_code.strip())
-                    if ok:
-                        st.session_state.collaborator_mode = True
-                        st.session_state.assigned_categories = set(join_cats)
-                        st.session_state.owner_label = join_name.strip()
-                        for ckey in join_cats:
-                            upsert_category_assignment(
-                                st.session_state.current_assessment_id,
-                                ckey, join_name.strip(), "in_progress",
-                            )
-                        st.session_state.step = 5
-                        st.success("Joined — edit your assigned categories in Step 5.")
-                        st.rerun()
-                    else:
-                        st.error(err or "Share code not found.")
-
-        if st.session_state.get("current_assessment_id") and not st.session_state.get("collaborator_mode"):
-            with st.expander("Category assignments"):
-                for ckey in ordered_sel_cats():
-                    assignee = st.text_input(
-                        CATS[ckey]["label"],
-                        key=f"assign_{ckey}",
-                        placeholder="Assignee name",
-                    )
-                    if st.button(f"Assign {CATS[ckey]['label'][:3]}", key=f"assign_btn_{ckey}"):
-                        if assignee.strip():
-                            upsert_category_assignment(
-                                st.session_state.current_assessment_id,
-                                ckey, assignee.strip(), "pending",
-                            )
-                            st.success(f"Assigned {CATS[ckey]['label']}.")
-
-    if st.button("Compare assessments", use_container_width=True, key="sidebar_compare",
-                 help="Compare ranks and scores between two saved assessments."):
-        st.session_state.step = -3
-        st.rerun()
-
-    st.divider()
-
-
-def compare_assessments_page():
-    st.header("Compare assessments")
-
-    if not supabase_available():
-        st.info(
-            "Cloud compare requires Supabase. Import two JSON exports manually below, "
-            "or configure Supabase secrets for saved assessments."
-        )
-
-    cloud_list = list_cloud_assessments() if supabase_available() else []
-    options = {}
-    for r in cloud_list:
-        options[f"{r['name']} ({r['updated_at'][:10]})"] = r["id"]
-
-    use_current = st.checkbox("Include current session as Assessment A", value=True, key="cmp_use_current")
-
-    a_pick = b_pick = None
-    if options:
-        a_labels = (["Current session"] if use_current else []) + list(options.keys())
-        b_labels = list(options.keys())
-        a_pick = st.selectbox("Assessment A", a_labels, key="cmp_a") if a_labels else None
-        b_pick = st.selectbox("Assessment B", b_labels, key="cmp_b") if b_labels else None
-
-    ja = st.file_uploader("Or upload JSON for A", type=["json"], key="cmp_json_a")
-    jb = st.file_uploader("Or upload JSON for B", type=["json"], key="cmp_json_b")
-
-    if st.button("Run comparison", type="primary", key="cmp_run"):
-        snap_a = snap_b = None
-
-        if ja:
-            snap_a = json.loads(ja.getvalue()).get("state", {})
-        elif use_current and (not a_pick or a_pick == "Current session"):
-            snap_a = serialize_assessment().get("state", {})
-        elif a_pick and a_pick in options:
-            row = fetch_assessment_by_id(options[a_pick])
-            if row:
-                snap_a = (row.get("state_json") or {}).get("state", {})
-
-        if jb:
-            snap_b = json.loads(jb.getvalue()).get("state", {})
-        elif b_pick and b_pick in options:
-            row = fetch_assessment_by_id(options[b_pick])
-            if row:
-                snap_b = (row.get("state_json") or {}).get("state", {})
-
-        if not snap_a or not snap_b:
-            st.error("Select or upload two assessments to compare.")
-            return
-
-        names_a, _, _, psi_a, rank_a = _ranks_from_snapshot(snap_a)
-        names_b, _, _, psi_b, rank_b = _ranks_from_snapshot(snap_b)
-        all_names = list(dict.fromkeys(list(names_a) + list(names_b)))
-
-        rows = []
-        for name in all_names:
-            ia = names_a.index(name) if name in names_a else None
-            ib = names_b.index(name) if name in names_b else None
-            ra = int(rank_a[ia]) if ia is not None and len(rank_a) > ia else None
-            rb = int(rank_b[ib]) if ib is not None and len(rank_b) > ib else None
-            pa = float(psi_a[ia]) if ia is not None and len(psi_a) > ia else None
-            pb = float(psi_b[ib]) if ib is not None and len(psi_b) > ib else None
-            rows.append({
-                "Alternative": name,
-                "Rank A": ra,
-                "Rank B": rb,
-                "Rank Δ": (rb - ra) if ra is not None and rb is not None else None,
-                "PSI A": round(pa, 4) if pa is not None else None,
-                "PSI B": round(pb, 4) if pb is not None else None,
-                "PSI Δ": round(pb - pa, 4) if pa is not None and pb is not None else None,
-            })
-        st.subheader("Rank & PSI comparison")
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        cs_a = _from_json_safe(snap_a.get("cat_scores", {}), "cat_scores")
-        cs_b = _from_json_safe(snap_b.get("cat_scores", {}), "cat_scores")
-        if isinstance(cs_a, dict) and isinstance(cs_b, dict) and cs_a and cs_b:
-            cat_rows = []
-            shared_cats = [c for c in CATEGORY_ORDER if c in cs_a and c in cs_b]
-            for ckey in shared_cats:
-                for pi, name in enumerate(all_names):
-                    ia = names_a.index(name) if name in names_a else None
-                    ib = names_b.index(name) if name in names_b else None
-                    if ia is None or ib is None:
-                        continue
-                    va = float(np.array(cs_a[ckey])[ia]) if ia is not None else None
-                    vb = float(np.array(cs_b[ckey])[ib]) if ib is not None else None
-                    if va is not None and vb is not None:
-                        cat_rows.append({
-                            "Category": CATS[ckey]["label"],
-                            "Alternative": name,
-                            "Score A": round(va, 4),
-                            "Score B": round(vb, 4),
-                            "Δ": round(vb - va, 4),
-                        })
-            if cat_rows:
-                st.subheader("Category score differences")
-                st.dataframe(pd.DataFrame(cat_rows), use_container_width=True, hide_index=True)
-
-    if st.button("Back to home", type="primary", key="cmp_back"):
-        st.session_state.step = 0
-        st.rerun()
 
 
 init_state()
@@ -2982,8 +2303,6 @@ with st.sidebar:
 
     step = st.session_state.step
 
-    render_assessments_sidebar()
-
     st.markdown(
         f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
         f"text-transform:uppercase;letter-spacing:0.06em;"
@@ -3015,9 +2334,7 @@ with st.sidebar:
     }
 
     total_steps = len(STEP_LABELS)
-    if step == -3:
-        st.caption("Compare assessments")
-    elif step < 0:
+    if step < 0:
         st.caption("Documentation")
         st.markdown(
             "<div class='prism-progress-wrap'>"
@@ -3577,20 +2894,8 @@ def step4():
 def step5():
     st.header("Step 5 - Enter indicator values")
 
-    if st.session_state.get("collaborator_mode"):
-        aname = st.session_state.get("assessment_name") or "Shared assessment"
-        cats = ", ".join(CATS[c]["label"] for c in ordered_sel_cats_for_editing())
-        st.info(
-            f"Collaborator mode — editing **{cats}** for assessment **{aname}**. "
-            "Save your category data to cloud when finished."
-        )
-
     names = st.session_state.proc_names
-    edit_cats = ordered_sel_cats_for_editing()
-
-    if st.session_state.get("collaborator_mode") and not edit_cats:
-        st.warning("No assigned categories match this assessment. Re-join with valid categories.")
-        return
+    edit_cats = ordered_sel_cats()
 
     for ckey in edit_cats:
         cat = CATS[ckey]
@@ -3666,92 +2971,71 @@ def step5():
             use_container_width=True,
             hide_index=True,
         )
-        if not st.session_state.get("collaborator_mode"):
-            ack = st.checkbox(
-                "I have reviewed the flagged outliers and confirm they are correct",
-                value=st.session_state.get("outliers_acknowledged", False),
-                key="outlier_ack_cb",
-            )
-            st.session_state.outliers_acknowledged = ack
-            if ack:
-                st.session_state._outlier_ack_fp = value_fp
-
-    if st.session_state.get("collaborator_mode") and st.session_state.get("current_assessment_id"):
-        st.divider()
-        if st.button("Save my categories to cloud", type="primary", key="collab_cloud_save"):
-            saved, err = save_collaborator_category_merge(
-                st.session_state.current_assessment_id,
-                st.session_state.assigned_categories,
-            )
-            if err:
-                st.error(err)
-            else:
-                for ckey in st.session_state.assigned_categories:
-                    upsert_category_assignment(
-                        st.session_state.current_assessment_id,
-                        ckey,
-                        st.session_state.get("owner_label") or "Collaborator",
-                        "complete",
-                    )
-                st.success("Your category data has been saved to the shared assessment.")
+        ack = st.checkbox(
+            "I have reviewed the flagged outliers and confirm they are correct",
+            value=st.session_state.get("outliers_acknowledged", False),
+            key="outlier_ack_cb",
+        )
+        st.session_state.outliers_acknowledged = ack
+        if ack:
+            st.session_state._outlier_ack_fp = value_fp
 
     # ── Save / Load Draft ────────────────────────────────────────────────────
-    if not st.session_state.get("collaborator_mode"):
-        st.divider()
-        dc1, dc2 = st.columns(2)
-        with dc1:
-            if st.button("💾 Save draft", key="save_draft_btn",
-                         help="Saves all entered values in memory. Restores them if you navigate away."):
-                draft = {}
-                for ckey in ordered_sel_cats():
-                    editor_key = f"editor_{ckey}"
-                    seed_key   = f"editor_seed_{ckey}"
-                    if editor_key in st.session_state:
-                        df = st.session_state[editor_key]
-                    elif seed_key in st.session_state:
-                        df = st.session_state[seed_key]
-                    else:
-                        continue
-                    draft[ckey] = df.values.tolist()
-                st.session_state["_step5_draft"] = draft
-                st.success("Draft saved — values preserved across navigation.")
-        with dc2:
-            has_draft = "_step5_draft" in st.session_state
-            if st.button("📂 Load draft", key="load_draft_btn",
-                         disabled=not has_draft,
-                         help="Restore previously saved values."):
-                draft = st.session_state["_step5_draft"]
-                for ckey, values in draft.items():
-                    ind_names, ind_units, _ = get_full_indicators(ckey)
-                    rows = [f"{ind_names[j]} ({ind_units[j]})"
-                            for j in range(len(ind_names))]
-                    df = pd.DataFrame(values, index=rows,
-                                      columns=st.session_state.proc_names)
-                    st.session_state[f"editor_seed_{ckey}"] = df
-                    for j in range(len(ind_names)):
-                        for pi in range(len(st.session_state.proc_names)):
-                            st.session_state.indicator_values[(ckey, j, pi)] = float(values[j][pi])
-                st.success("Draft loaded.")
-                st.rerun()
-            if not has_draft:
-                st.caption("No draft saved yet.")
-        st.divider()
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("<- Back"):
-                st.session_state.step = 4
-                st.rerun()
-        with c2:
-            if st.button("Next ->", type="primary"):
-                has_values = any(v != 0 for v in st.session_state.indicator_values.values())
-                if not has_values:
-                    st.error("Enter at least some values before proceeding.")
-                elif outliers and not st.session_state.get("outliers_acknowledged"):
-                    st.error("Review flagged outliers before proceeding.")
+    st.divider()
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        if st.button("💾 Save draft", key="save_draft_btn",
+                     help="Saves all entered values in memory. Restores them if you navigate away."):
+            draft = {}
+            for ckey in ordered_sel_cats():
+                editor_key = f"editor_{ckey}"
+                seed_key   = f"editor_seed_{ckey}"
+                if editor_key in st.session_state:
+                    df = st.session_state[editor_key]
+                elif seed_key in st.session_state:
+                    df = st.session_state[seed_key]
                 else:
-                    st.session_state.corr_acknowledged = False
-                    st.session_state.step = 6
-                    st.rerun()
+                    continue
+                draft[ckey] = df.values.tolist()
+            st.session_state["_step5_draft"] = draft
+            st.success("Draft saved — values preserved across navigation.")
+    with dc2:
+        has_draft = "_step5_draft" in st.session_state
+        if st.button("📂 Load draft", key="load_draft_btn",
+                     disabled=not has_draft,
+                     help="Restore previously saved values."):
+            draft = st.session_state["_step5_draft"]
+            for ckey, values in draft.items():
+                ind_names, ind_units, _ = get_full_indicators(ckey)
+                rows = [f"{ind_names[j]} ({ind_units[j]})"
+                        for j in range(len(ind_names))]
+                df = pd.DataFrame(values, index=rows,
+                                  columns=st.session_state.proc_names)
+                st.session_state[f"editor_seed_{ckey}"] = df
+                for j in range(len(ind_names)):
+                    for pi in range(len(st.session_state.proc_names)):
+                        st.session_state.indicator_values[(ckey, j, pi)] = float(values[j][pi])
+            st.success("Draft loaded.")
+            st.rerun()
+        if not has_draft:
+            st.caption("No draft saved yet.")
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("<- Back"):
+            st.session_state.step = 4
+            st.rerun()
+    with c2:
+        if st.button("Next ->", type="primary"):
+            has_values = any(v != 0 for v in st.session_state.indicator_values.values())
+            if not has_values:
+                st.error("Enter at least some values before proceeding.")
+            elif outliers and not st.session_state.get("outliers_acknowledged"):
+                st.error("Review flagged outliers before proceeding.")
+            else:
+                st.session_state.corr_acknowledged = False
+                st.session_state.step = 6
+                st.rerun()
 
 
 def step6():
@@ -7421,7 +6705,6 @@ def step15():
 
 
 STEPS = {
-    -3: compare_assessments_page,
     -2: method_descriptions_page,
     -1: how_to_use_page,
     0: landing_page, 1: step1, 2: step2, 3: step3, 4: step4, 5: step5, 6: step6,
