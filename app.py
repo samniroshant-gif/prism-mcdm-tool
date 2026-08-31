@@ -2011,8 +2011,8 @@ def _render_method_descriptions_panel():
     st.markdown(
         "<p class='prism-about-body' style='font-family:Inter,sans-serif;"
         "font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:16px;'>"
-        "Plain-language summary of each method used in PRISM — what it does and "
-        "where it fits in the assessment workflow."
+        "Summary of each method used in PRISM (what it does and where it fits "
+        "in the assessment workflow)."
         "</p>",
         unsafe_allow_html=True,
     )
