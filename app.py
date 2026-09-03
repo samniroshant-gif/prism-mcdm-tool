@@ -1583,19 +1583,9 @@ def _build_decision_support_tables(winner_info):
         })
 
     if not strengths:
-        strengths.append({
-            "Evidence": "—",
-            "Source": "—",
-            "Result": "—",
-            "Interpretation": "No clear strength signals identified",
-        })
+        pass
     if not weaknesses:
-        weaknesses.append({
-            "Area": "—",
-            "Source": "—",
-            "Result": "—",
-            "Impact": "No material weaknesses detected across categories, methods, or combinations",
-        })
+        pass
 
     return summary_rows, strengths, weaknesses, profile_rows
 
@@ -1796,6 +1786,26 @@ def reset_all():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     init_state()
+
+
+def _reset_with_confirmation(key_prefix, label="Reset all"):
+    """Two-step confirm before clearing session data."""
+    pending_key = f"_reset_pending_{key_prefix}"
+    if st.session_state.get(pending_key):
+        st.warning("This will clear all entered data and return to the landing page.")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Yes, reset all data", key=f"{key_prefix}_reset_confirm", type="primary"):
+                st.session_state.pop(pending_key, None)
+                reset_all()
+                st.rerun()
+        with c2:
+            if st.button("Cancel", key=f"{key_prefix}_reset_cancel"):
+                st.session_state.pop(pending_key, None)
+                st.rerun()
+    elif st.button(label, key=f"{key_prefix}_reset"):
+        st.session_state[pending_key] = True
+        st.rerun()
 
 
 init_state()
@@ -2007,7 +2017,7 @@ METHOD_DESCRIPTIONS = [
 
 
 def _render_method_descriptions_panel():
-    """Render method descriptions as one tab per method with merged paragraphs."""
+    """Render method descriptions with selectbox and structured detail lines."""
     st.markdown(
         "<p class='prism-about-body' style='font-family:Inter,sans-serif;"
         "font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:16px;'>"
@@ -2016,20 +2026,18 @@ def _render_method_descriptions_panel():
         "</p>",
         unsafe_allow_html=True,
     )
-    tabs = st.tabs([m["Method"] for m in METHOD_DESCRIPTIONS])
-    for tab, method in zip(tabs, METHOD_DESCRIPTIONS):
-        with tab:
-            stage = method["Stage"]
-            desc = method["Plain-language description"]
-            role = method["Role in PRISM"]
-            st.markdown(
-                f"<p class='prism-about-body' style='font-family:Inter,sans-serif;"
-                f"font-size:11pt;line-height:1.75;color:#1A202C;'>"
-                f"During <strong>{stage}</strong>, {desc} "
-                f"In PRISM, {role[0].lower() + role[1:] if role else role}."
-                f"</p>",
-                unsafe_allow_html=True,
-            )
+    method_names = [m["Method"] for m in METHOD_DESCRIPTIONS]
+    pick = st.selectbox("Select method", method_names, key="method_desc_pick")
+    method = next(m for m in METHOD_DESCRIPTIONS if m["Method"] == pick)
+    st.markdown(
+        f"<p class='prism-about-body' style='font-family:Inter,sans-serif;"
+        f"font-size:11pt;line-height:1.75;color:#1A202C;margin-top:12px;'>"
+        f"<strong>Stage:</strong> {method['Stage']}<br>"
+        f"<strong>What it does:</strong> {method['Plain-language description']}<br>"
+        f"<strong>Role in PRISM:</strong> {method['Role in PRISM']}"
+        f"</p>",
+        unsafe_allow_html=True,
+    )
 
 
 def method_descriptions_page():
@@ -2047,9 +2055,9 @@ def how_to_use_page():
     st.markdown(
         "<p class='prism-about-body' style='font-family:Inter,sans-serif;"
         "font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:16px;'>"
-        "Follow the guided workflow in the sidebar from Step 1 through Step 12 "
-        "for a complete assessment. Optional validation, analytics, and decision "
-        "support steps are available after results are generated."
+        "Follow the guided workflow in the sidebar from Step 1 through Step 15. "
+        "Steps 1–12 cover the core assessment; Steps 13–14 are optional validation "
+        "and analytics; Step 15 provides decision support and the full Excel report."
         "</p>",
         unsafe_allow_html=True,
     )
@@ -2103,6 +2111,7 @@ def _write_df_to_sheet(ws, df, start_row, hdr_font, hdr_fill, hdr_align, body_fo
 def _render_excel_download_button(key_suffix=""):
     """Render Step 15 full-workbook download button."""
     key = f"excel_download_{key_suffix}" if key_suffix else "excel_download"
+    cache_key = f"_excel_report_buf_{key_suffix or 'default'}"
     if not OPENPYXL_OK:
         st.caption("Install openpyxl to enable Excel export.")
         return
@@ -2110,7 +2119,10 @@ def _render_excel_download_button(key_suffix=""):
         st.info("Complete Step 12 first to generate the full Excel report.")
         return
     try:
-        excel_buf = build_excel_report()
+        if cache_key not in st.session_state:
+            with st.spinner("Building full workbook…"):
+                st.session_state[cache_key] = build_excel_report()
+        excel_buf = st.session_state[cache_key]
         fname = f"PRISM_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
         st.download_button(
             label="Download full Excel report (Steps 1–15)",
@@ -2643,10 +2655,7 @@ with st.sidebar:
 
     st.divider()
 
-    if st.button("Reset", use_container_width=True,
-                 help="Clear all session data and restart from the landing page."):
-        reset_all()
-        st.rerun()
+    _reset_with_confirmation("sidebar", label="Reset")
 
 
 # ============================================================================
@@ -2778,14 +2787,15 @@ def landing_page():
         f"font-family:{_FONT_CSS};margin-bottom:12px;'>Assessment workflow</p>",
         unsafe_allow_html=True,
     )
-    w1, w2, w3, w4 = st.columns(4)
+    w1, w2, w3, w4, w5 = st.columns(5)
     workflow = [
         ("1", "Define", "Alternatives, categories, indicators"),
         ("2", "Process", "MEREC, N2, category scores"),
         ("3", "Aggregate", "RCW weights, MCDM, PSI ranking"),
         ("4", "Validate", "Sensitivity and uncertainty analysis"),
+        ("5", "Report & decide", "Decision support and Excel export"),
     ]
-    for col, (num, lbl, sub) in zip([w1, w2, w3, w4], workflow):
+    for col, (num, lbl, sub) in zip([w1, w2, w3, w4, w5], workflow):
         with col:
             st.markdown(
                 f"<div class='prism-workflow-step'>"
@@ -2835,6 +2845,15 @@ def landing_page():
         if st.button("Begin assessment", type="primary",
                      use_container_width=True, key="start_btn"):
             st.session_state.step = 1
+            st.rerun()
+    doc1, doc2 = st.columns(2)
+    with doc1:
+        if st.button("How to use", use_container_width=True, key="landing_how_to_use"):
+            st.session_state.step = -1
+            st.rerun()
+    with doc2:
+        if st.button("Method descriptions", use_container_width=True, key="landing_method_desc"):
+            st.session_state.step = -2
             st.rerun()
 
 
@@ -3258,10 +3277,14 @@ def step6():
         )
 
         if n_ind < 2:
-            st.write("")
+            st.info(
+                "Correlation requires at least 2 indicators in this category — skipped."
+            )
             continue
         if n_proc < 3:
-            st.write("")
+            st.info(
+                "Correlation requires at least 3 alternatives — skipped for this category."
+            )
             continue
 
         raw = np.zeros((n_ind, n_proc))
@@ -3941,11 +3964,11 @@ def step12():
             st.session_state.step = 11
             st.rerun()
     with c2:
-        if st.button("Validation (optional) ->", type="primary"):
+        if st.button("Validation (optional) ->"):
             st.session_state.step = 13
             st.rerun()
     with c3:
-        if st.button("Analytics ->", type="primary"):
+        if st.button("Analytics ->"):
             st.session_state.step = 14
             st.rerun()
     with c4:
@@ -3953,9 +3976,7 @@ def step12():
             st.session_state.step = 15
             st.rerun()
     with c5:
-        if st.button("Reset all"):
-            reset_all()
-            st.rerun()
+        _reset_with_confirmation("step12")
 
 
 # ============================================================================
@@ -5216,9 +5237,7 @@ def validation_intro():
                 st.session_state.step = 15
                 st.rerun()
         with c3:
-            if st.button("Reset all"):
-                reset_all()
-                st.rerun()
+            _reset_with_confirmation("val_empty")
         return
 
     c_refresh, c_info = st.columns([1, 3])
@@ -5320,9 +5339,7 @@ def validation_intro():
             st.session_state.step = 15
             st.rerun()
     with c3:
-        if st.button("Reset all"):
-            reset_all()
-            st.rerun()
+        _reset_with_confirmation("val_footer")
 
 
 def validation_weight_sensitivity():
@@ -6809,9 +6826,7 @@ def auxiliary_intro():
             st.session_state.step = 15
             st.rerun()
     with c4:
-        if st.button("Reset all"):
-            reset_all()
-            st.rerun()
+        _reset_with_confirmation("step14")
 
 
 
@@ -6828,16 +6843,15 @@ def step15():
                 st.session_state.step = 12
                 st.rerun()
         with c2:
-            if st.button("Reset all", key="ds_reset_empty"):
-                reset_all()
-                st.rerun()
+            _reset_with_confirmation("ds_empty")
         return
 
     names = st.session_state.proc_names
     methods = list(st.session_state.sel_mcdm_methods) or list(method_ranks.keys())
     winner_info = _resolve_overall_winner(names, method_ranks, methods)
 
-    if "validation_dashboard_results" not in st.session_state:
+    dashboard_pre_cached = "validation_dashboard_results" in st.session_state
+    if not dashboard_pre_cached:
         with st.spinner("Computing validation metrics for confidence index..."):
             compute_sensitivity_dashboard(force=False)
     else:
@@ -6868,6 +6882,27 @@ def step15():
                 use_container_width=True,
                 hide_index=True,
             )
+        with st.expander("How is DCI calculated?"):
+            st.markdown(
+                "The **Decision Confidence Index (DCI)** is the equal-weight average of "
+                "up to four 0–100 sub-scores:\n\n"
+                "1. **Monte Carlo rank stability** — how often the recommended alternative "
+                "ranks first under randomised category weights\n"
+                "2. **Bootstrap stability** — consistency of RCW weight ordering or "
+                "winner rank under resampling\n"
+                "3. **Robustness test pass rate** — share of green checks on the Step 13 "
+                "validation dashboard\n"
+                "4. **MCDM method agreement** — share of selected MCDM methods where the "
+                "winner holds rank 1\n\n"
+                "If a component cannot be computed, it is excluded and the mean is "
+                "re-normalised over the remaining components.\n\n"
+                "Visit **Step 13 — Validation** for full robustness test detail. "
+                + (
+                    "Validation metrics were computed automatically when you opened Step 15."
+                    if not dashboard_pre_cached
+                    else "Validation metrics use your cached Step 13 dashboard results."
+                )
+            )
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     summary, strengths, weaknesses, profile = _build_decision_support_tables(winner_info)
@@ -6876,10 +6911,22 @@ def step15():
     st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
 
     st.subheader("Strengths — why the winner wins")
-    st.dataframe(pd.DataFrame(strengths), use_container_width=True, hide_index=True)
+    if strengths:
+        st.dataframe(pd.DataFrame(strengths), use_container_width=True, hide_index=True)
+    else:
+        st.info(
+            "No clear strength signals yet. Run Step 13 validation, select multiple "
+            "MCDM methods in Step 11, or review category-combination sensitivity in Step 12."
+        )
 
     st.subheader("Weaknesses — where the winner fails")
-    st.dataframe(pd.DataFrame(weaknesses), use_container_width=True, hide_index=True)
+    if weaknesses:
+        st.dataframe(pd.DataFrame(weaknesses), use_container_width=True, hide_index=True)
+    else:
+        st.info(
+            "No material weaknesses detected. This may indicate a robust winner — "
+            "confirm with Step 13 validation before finalising your recommendation."
+        )
 
     st.subheader("Category score profile")
     st.dataframe(pd.DataFrame(profile), use_container_width=True, hide_index=True)
@@ -6907,9 +6954,7 @@ def step15():
             st.session_state.step = 14
             st.rerun()
     with c4:
-        if st.button("Reset all", key="ds_reset"):
-            reset_all()
-            st.rerun()
+        _reset_with_confirmation("ds_reset")
 
 
 STEPS = {
