@@ -2055,7 +2055,7 @@ def how_to_use_page():
     st.markdown(
         "<p class='prism-about-body' style='font-family:Inter,sans-serif;"
         "font-size:11pt;line-height:1.75;color:#1A202C;margin-bottom:16px;'>"
-        "Follow the guided workflow in the sidebar from Step 1 through Step 15. "
+        "Follow the guided workflow from Step 1 through Step 15. "
         "Steps 1–12 cover the core assessment; Steps 13–14 are optional validation "
         "and analytics; Step 15 provides decision support and the full Excel report."
         "</p>",
@@ -2542,27 +2542,6 @@ with st.sidebar:
     st.divider()
 
     step = st.session_state.step
-
-    st.markdown(
-        f"<p style='font-size:10pt;font-weight:600;color:{_BRAND_NAVY};"
-        f"text-transform:uppercase;letter-spacing:0.06em;"
-        f"font-family:{_FONT_CSS};margin:0 0 8px 0;'>Documentation</p>",
-        unsafe_allow_html=True,
-    )
-    if st.button("How to use", use_container_width=True, key="sidebar_how_to_use",
-                 help="Step-by-step guide for the full PRISM assessment workflow."):
-        st.session_state.step = -1
-        st.rerun()
-    if st.button("Method descriptions", use_container_width=True, key="sidebar_method_descriptions",
-                 help="Plain-language summary of every method used in PRISM."):
-        st.session_state.step = -2
-        st.rerun()
-    if step != 0 and st.button("Home", use_container_width=True, key="sidebar_home",
-                               help="Return to the PRISM landing page."):
-        st.session_state.step = 0
-        st.rerun()
-
-    st.divider()
 
     SECTIONS = {
         "Problem Definition": [1, 2, 3, 4, 5],
