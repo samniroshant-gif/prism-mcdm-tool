@@ -139,6 +139,7 @@ st.markdown(f"""
 {_FONT_FACES}
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap');
 
 /* ── Global Times / Tinos (no blanket span — preserves Material Icons) ── */
 html, body, .stApp,
@@ -269,7 +270,7 @@ h1, h2, h3, h4, h5, h6,
     color: #0D2B5E !important;
 }}
 
-/* ── Material icons — sidebar, expanders, header buttons ── */
+/* ── Material icons — sidebar, expanders, header buttons, help tooltips ── */
 [data-testid="collapsedControl"] span,
 [data-testid="stSidebarCollapseButton"] span,
 [data-testid="stExpanderToggleIcon"],
@@ -278,6 +279,16 @@ h1, h2, h3, h4, h5, h6,
 [data-testid="stExpander"] summary span[class*="material"],
 [data-testid="stExpander"] .material-icons,
 [data-testid="stExpander"] [class*="material-symbols"],
+[data-testid="stTooltipIcon"],
+[data-testid="stTooltipIcon"] span,
+[data-testid="stTooltipHoverTarget"],
+[data-testid="stTooltipHoverTarget"] span,
+[data-testid="stHelpButton"],
+[data-testid="stHelpButton"] span,
+.stCheckbox [data-testid="stTooltipIcon"],
+.stCheckbox [data-testid="stTooltipHoverTarget"],
+.stRadio [data-testid="stTooltipIcon"],
+.stRadio [data-testid="stTooltipHoverTarget"],
 span.material-icons,
 span[class*="material-symbols"],
 .material-icons,
@@ -288,6 +299,7 @@ span[class*="material-symbols"],
     letter-spacing: normal !important;
     text-transform: none !important;
     white-space: nowrap !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
 }}
 
 /* ── Progress bar ── */
@@ -729,12 +741,15 @@ footer {{visibility: hidden;}}
     fill: {_BRAND_NAVY} !important;
 }}
 
-/* ── Tooltip help icons ── */
+/* ── Tooltip help icons (?) next to widget labels ── */
 [data-testid="stTooltipIcon"],
 [data-testid="stTooltipHoverTarget"] {{
     color: {_BRAND_MUTED} !important;
+    font-size: 16px !important;
+    line-height: 1 !important;
 }}
-[data-testid="stTooltipIcon"]:hover {{
+[data-testid="stTooltipIcon"]:hover,
+[data-testid="stTooltipHoverTarget"]:hover {{
     color: {_BRAND_NAVY} !important;
 }}
 .stTooltipContent {{
