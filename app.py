@@ -734,18 +734,30 @@ footer {{visibility: hidden;}}
     border-color: {_BRAND_NAVY} !important;
     box-shadow: 0 0 0 1px {_BRAND_NAVY} !important;
 }}
-[data-baseweb="checkbox"] svg {{
-    fill: {_BRAND_NAVY} !important;
+/* ── Help icons (?) beside widget labels — must stay outline, not filled ── */
+.stCheckbox [data-testid="stWidgetLabel"] svg,
+.stRadio [data-testid="stWidgetLabel"] svg,
+[data-testid="stWidgetLabel"] svg,
+[data-testid="stTooltipIcon"] svg,
+[data-testid="stTooltipHoverTarget"] svg {{
+    fill: none !important;
+    stroke: {_BRAND_MUTED} !important;
+    color: {_BRAND_MUTED} !important;
+    width: 1rem !important;
+    height: 1rem !important;
 }}
-[data-baseweb="radio"] svg {{
-    fill: {_BRAND_NAVY} !important;
+[data-testid="stTooltipIcon"]:hover svg,
+[data-testid="stTooltipHoverTarget"]:hover svg,
+.stCheckbox [data-testid="stWidgetLabel"]:hover svg,
+.stRadio [data-testid="stWidgetLabel"]:hover svg {{
+    stroke: {_BRAND_NAVY} !important;
+    color: {_BRAND_NAVY} !important;
 }}
 
-/* ── Tooltip help icons (?) next to widget labels ── */
+/* ── Tooltip help icon containers ── */
 [data-testid="stTooltipIcon"],
 [data-testid="stTooltipHoverTarget"] {{
     color: {_BRAND_MUTED} !important;
-    font-size: 16px !important;
     line-height: 1 !important;
 }}
 [data-testid="stTooltipIcon"]:hover,
