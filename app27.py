@@ -2665,6 +2665,19 @@ def landing_page():
 
 
 
+def _sync_alternative_name_widgets(n, names):
+    """Keep pname_* widget keys aligned when alternative count changes."""
+    for i in range(n):
+        key = f"pname_{i}"
+        if key not in st.session_state:
+            st.session_state[key] = names[i] if i < len(names) else ""
+    for key in list(st.session_state.keys()):
+        if key.startswith("pname_"):
+            suffix = key[6:]
+            if suffix.isdigit() and int(suffix) >= n:
+                del st.session_state[key]
+
+
 def step1():
     st.header("Step 1 - Define alternatives")
 
@@ -2679,16 +2692,18 @@ def step1():
     elif len(names) > n:
         names = names[:n]
     st.session_state.proc_names = names
+    _sync_alternative_name_widgets(n, names)
 
     st.subheader("Name each alternative")
-    cols = st.columns(min(n, 5))
     new_names = []
     for i in range(n):
-        with cols[i % len(cols)]:
-            val = st.text_input(f"Alternative {i+1}", value=names[i], key=f"pname_{i}",
-                                 placeholder="enter name",
-                                 help=FIELD_HELP["alternative_name"])
-            new_names.append(val.strip())
+        val = st.text_input(
+            f"Alternative {i+1}",
+            key=f"pname_{i}",
+            placeholder="enter name",
+            help=FIELD_HELP["alternative_name"],
+        )
+        new_names.append(val.strip())
     st.session_state.proc_names = new_names
 
     st.divider()
