@@ -1054,8 +1054,9 @@ def merec_weights(norm_matrix):
         mask[j] = False
         s_prime = np.log(1 + abs_ln[mask, :].sum(axis=0) / n_crit)
         E[j] = np.sum(np.abs(s_prime - S))
-    total = E.sum() or 1.0
-    return E / total
+    total = E.sum()
+    # No variation across alternatives: no indicator is more informative, so weight equally.
+    return E / total if total > 1e-12 else np.full(n_crit, 1.0 / n_crit)
 
 
 def entropy_weights(mat):
@@ -1070,8 +1071,8 @@ def entropy_weights(mat):
         e = -term.sum() / (np.log(n) or 1.0)
         E[j] = min(max(e, 0.0), 1.0)
     d = 1 - E
-    total = d.sum() or 1.0
-    return d / total
+    total = d.sum()
+    return d / total if total > 1e-12 else np.full(k, 1.0 / k)
 
 
 def critic_weights(mat):
@@ -1095,8 +1096,9 @@ def critic_weights(mat):
             den = np.sqrt(np.sum(da ** 2) * np.sum(db ** 2)) or 1.0
             corr[a, b] = num / den
     C = np.array([stds[j] * np.sum(1 - corr[j, :]) for j in range(k)])
-    total = C.sum() or 1.0
-    return C / total
+    total = C.sum()
+    # A single category (no conflict to measure) or no spread: weight equally.
+    return C / total if total > 1e-12 else np.full(k, 1.0 / k)
 
 
 def cilos_weights(mat):
@@ -1249,7 +1251,8 @@ def topsis(weighted_mat):
     anti = weighted_mat.min(axis=1)
     Dp = np.sqrt(((weighted_mat - ideal[:, None]) ** 2).sum(axis=0))
     Dm = np.sqrt(((weighted_mat - anti[:, None]) ** 2).sum(axis=0))
-    C = np.where((Dp + Dm) > 0, Dm / (Dp + Dm), 0.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        C = np.where((Dp + Dm) > 0, Dm / (Dp + Dm), 0.0)
     return rank_with_ties(C, ascending=False)
 
 
@@ -1434,7 +1437,22 @@ def current_final_weights():
         return st.session_state.final_cat_weights
     mat = np.array([st.session_state.cat_scores[c] for c in ordered_l3_cats()])
     sets = selected_weight_sets(mat, st.session_state.sel_weight_methods)
+    if not sets:
+        return np.full(len(mat), 1.0 / len(mat))
     return gpm_consolidate(sets, float(p)) if len(sets) > 1 else sets[0]
+
+
+def baseline_method_ranks(methods):
+    """Unperturbed MCDM ranks at the weights in use for the current analysis, so a
+    view's perturbed results are compared against the same power-mean case."""
+    ss = st.session_state
+    if ss.get("gpm_override_p") is None:
+        stored = ss.get("last_method_ranks") or {}
+        if all(m in stored for m in methods):
+            return stored
+    mat = np.array([ss.cat_scores[c] for c in ordered_l3_cats()])
+    w = np.asarray(current_final_weights(), dtype=float)
+    return run_mcdm_suite(mat * w[:, None], w, methods)
 
 
 def gpm_picker(key, title="Power mean for weight consolidation"):
@@ -1529,7 +1547,7 @@ def _resolve_overall_winner(names, method_ranks, methods):
             return {
                 "winner_idx": wi,
                 "winner_name": names[wi],
-                "basis_label": "PSI-combo tie-breaker (p=0.50)",
+                "basis_label": f"PSI-combo tie-breaker (p={ss.get('last_psi_combo_p', 0.5):.2f})",
                 "is_tied": False,
                 "tied_names": [],
                 "psi_score": psi_score,
@@ -1882,6 +1900,36 @@ def get_raw_matrix(ckey):
     return raw, benefits
 
 
+def _indicator_ids(ckey):
+    """Stable ids of the indicators in get_full_indicators order (position j -> id)."""
+    disabled = st.session_state.get("disabled_indicators", set())
+    ids = [("p", j) for j in range(len(CATS[ckey]["indicators"])) if (ckey, j) not in disabled]
+    ids += [("c", ci) for ci in range(st.session_state.custom_indicator_counts.get(ckey, 0))]
+    return ids
+
+
+def _remap_indicator_values():
+    """indicator_values is keyed by position; when indicators are switched on/off or custom
+    ones added/removed, move each stored value to its indicator's new position."""
+    ss = st.session_state
+    layouts = ss.setdefault("_value_layout", {})
+    values = ss.indicator_values
+    for ckey, old_ids in list(layouts.items()):
+        new_ids = _indicator_ids(ckey)
+        if new_ids == old_ids:
+            continue
+        old = {k: v for k, v in values.items() if k[0] == ckey}
+        for k in old:
+            del values[k]
+        for new_j, ind_id in enumerate(new_ids):
+            if ind_id in old_ids:
+                old_j = old_ids.index(ind_id)
+                for (_, j, pi), v in old.items():
+                    if j == old_j:
+                        values[(ckey, new_j, pi)] = v
+        layouts[ckey] = new_ids
+
+
 OUTLIER_SD_THRESHOLD = 2.0
 MIN_ALTS_FOR_OUTLIER = 3
 
@@ -1896,6 +1944,39 @@ def _indicator_values_fingerprint(cats=None):
                 val = st.session_state.indicator_values.get((ckey, j, pi), 0.0)
                 items.append((ckey, j, pi, round(float(val), 6)))
     return tuple(sorted(items))
+
+
+_DERIVED_RESULT_KEYS = (
+    "validation_dashboard_results", "bs_results", "ind_unc_results", "sh_results",
+    "mc_rank_counts", "mc_psi_rank_counts", "mc_n_iter", "mc_methods_used", "mc_k_value", "mc_sig",
+)
+
+
+def _results_signature():
+    """Every input the Step 12 results depend on."""
+    ss = st.session_state
+    return (
+        _indicator_values_fingerprint(),
+        tuple(ss.proc_names),
+        tuple(ordered_l3_cats()),
+        tuple(sorted(ss.get("disabled_indicators", ()))),
+        repr(ss.get("custom_indicators", {})),
+        repr(ss.get("sel_units", {})),
+        tuple(sorted(ss.sel_weight_methods)),
+        tuple(sorted(ss.sel_mcdm_methods)),
+        ss.get("gpm_forward_p"),
+    )
+
+
+def _invalidate_derived_results():
+    """Drop verification/analytics results and exports computed from different inputs."""
+    sig = _results_signature()
+    if st.session_state.get("_results_sig") == sig:
+        return
+    for k in list(st.session_state.keys()):
+        if k in _DERIVED_RESULT_KEYS or k.startswith(("export_", "_excel_report_buf_")):
+            del st.session_state[k]
+    st.session_state["_results_sig"] = sig
 
 
 def detect_indicator_outliers(cats=None, threshold=OUTLIER_SD_THRESHOLD):
@@ -2153,11 +2234,18 @@ def _render_excel_download_button(key_suffix=""):
     if not st.session_state.get("last_method_ranks"):
         st.info("Complete Step 12 first to generate the full Excel report.")
         return
+    ss = st.session_state
+    fingerprint = (
+        ss.get("_results_sig"),
+        id(ss.get("validation_dashboard_results")),
+        tuple(sorted((k, id(ss[k])) for k in ss.keys() if k.startswith("export_"))),
+    )
     try:
-        if cache_key not in st.session_state:
+        cached = ss.get(cache_key)
+        if not cached or cached["fp"] != fingerprint:
             with st.spinner("Building full workbook…"):
-                st.session_state[cache_key] = build_excel_report()
-        excel_buf = st.session_state[cache_key]
+                ss[cache_key] = {"fp": fingerprint, "buf": build_excel_report()}
+        excel_buf = ss[cache_key]["buf"]
         fname = f"PRISM_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
         st.download_button(
             label="Download full Excel report (Steps 1–15)",
@@ -2896,9 +2984,17 @@ def step1():
     st.divider()
     if st.button("Next ->", type="primary"):
         final_names = [n.strip() if n.strip() else f"P{i+1}" for i, n in enumerate(new_names)]
-        st.session_state.proc_names = final_names
-        st.session_state.step = 2
-        st.rerun()
+        seen, dupes = set(), []
+        for nm in final_names:
+            if nm.casefold() in seen and nm not in dupes:
+                dupes.append(nm)
+            seen.add(nm.casefold())
+        if dupes:
+            st.error(f"Alternative names must be unique. Rename: {', '.join(dupes)}.")
+        else:
+            st.session_state.proc_names = final_names
+            st.session_state.step = 2
+            st.rerun()
 
 
 def step2():
@@ -3103,6 +3199,7 @@ def step4():
                 for e in errors:
                     st.error(e)
             else:
+                _remap_indicator_values()
                 # Clear any stale seed keys for step5 so editor rebuilds
                 for k in [k for k in st.session_state if k.startswith("editor_seed_")]:
                     del st.session_state[k]
@@ -3144,6 +3241,7 @@ def step5():
             seed = [[st.session_state.indicator_values.get((ckey, j, pi), 0.0)
                       for pi in range(len(names))] for j in range(len(ind_names))]
             st.session_state[seed_key] = pd.DataFrame(seed, index=rows, columns=names)
+        st.session_state.setdefault("_value_layout", {})[ckey] = _indicator_ids(ckey)
 
         # column_config disables sort arrows on process name columns
         col_cfg = {name: st.column_config.NumberColumn(
@@ -3224,7 +3322,7 @@ def step5():
                     df = st.session_state[seed_key]
                 else:
                     continue
-                draft[ckey] = df.values.tolist()
+                draft[ckey] = {"ids": _indicator_ids(ckey), "values": df.values.tolist()}
             st.session_state["_step5_draft"] = draft
             st.success("Draft saved — values preserved across navigation.")
     with dc2:
@@ -3233,16 +3331,25 @@ def step5():
                      disabled=not has_draft,
                      help="Restore previously saved values."):
             draft = st.session_state["_step5_draft"]
-            for ckey, values in draft.items():
+            n_alt = len(st.session_state.proc_names)
+            for ckey, saved in draft.items():
+                if ckey not in edit_cats:
+                    continue
                 ind_names, ind_units, _ = get_full_indicators(ckey)
                 rows = [f"{ind_names[j]} ({ind_units[j]})"
                         for j in range(len(ind_names))]
+                values = []
+                for ind_id in _indicator_ids(ckey):
+                    row = (saved["values"][saved["ids"].index(ind_id)]
+                           if ind_id in saved["ids"] else [])
+                    row = [float(v) for v in row[:n_alt]]
+                    values.append(row + [0.0] * (n_alt - len(row)))
                 df = pd.DataFrame(values, index=rows,
                                   columns=st.session_state.proc_names)
                 st.session_state[f"editor_seed_{ckey}"] = df
                 for j in range(len(ind_names)):
-                    for pi in range(len(st.session_state.proc_names)):
-                        st.session_state.indicator_values[(ckey, j, pi)] = float(values[j][pi])
+                    for pi in range(n_alt):
+                        st.session_state.indicator_values[(ckey, j, pi)] = values[j][pi]
             st.success("Draft loaded.")
             st.rerun()
         if not has_draft:
@@ -3255,9 +3362,20 @@ def step5():
             st.rerun()
     with c2:
         if st.button("Next ->", type="primary"):
-            has_values = any(v != 0 for v in st.session_state.indicator_values.values())
-            if not has_values:
-                st.error("Enter at least some values before proceeding.")
+            non_positive = []
+            for ckey in edit_cats:
+                ind_names, _, _ = get_full_indicators(ckey)
+                for j, iname in enumerate(ind_names):
+                    for pi, pname in enumerate(names):
+                        if st.session_state.indicator_values.get((ckey, j, pi), 0.0) <= 0:
+                            non_positive.append(f"{iname} / {pname}")
+            if non_positive:
+                shown = ", ".join(non_positive[:6]) + (" …" if len(non_positive) > 6 else "")
+                st.error(
+                    f"{len(non_positive)} value(s) are 0 or negative ({shown}). MEREC weighting "
+                    "and N2 normalisation need values greater than 0. Enter a small positive "
+                    "number (e.g. 0.001) for a true zero."
+                )
             elif outliers and not st.session_state.get("outliers_acknowledged"):
                 st.error("Review flagged outliers before proceeding.")
             else:
@@ -3717,6 +3835,7 @@ def step11():
 
 def step12():
     st.header("Step 12 - Results")
+    _invalidate_derived_results()
 
     names = st.session_state.proc_names
     n_proc = len(names)
@@ -4006,6 +4125,7 @@ def step12():
             psi_combo_ranks = rank_with_ties(psi_combo_scores, ascending=False)
             st.session_state["last_psi_combo_scores"] = psi_combo_scores.tolist()
             st.session_state["last_psi_combo_ranks"] = psi_combo_ranks.tolist()
+            st.session_state["last_psi_combo_p"] = float(psi_combo_p)
 
             combo_bar_cols = st.columns(len(names))
             for i, name in enumerate(names):
@@ -4022,6 +4142,7 @@ def step12():
         else:
             st.session_state.pop("last_psi_combo_scores", None)
             st.session_state.pop("last_psi_combo_ranks", None)
+            st.session_state.pop("last_psi_combo_p", None)
 
     st.divider()
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -4058,7 +4179,7 @@ def validation_rank_reversal():
     l3_cats = ordered_l3_cats()
     sel_weight_methods = st.session_state.sel_weight_methods
     sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
-    method_ranks = st.session_state.get("last_method_ranks", {})
+    method_ranks = baseline_method_ranks(sel_mcdm_methods)
 
     if n_proc < 3:
         st.warning("Rank-reversal test requires at least 3 alternatives (you currently have 2).")
@@ -4224,7 +4345,7 @@ def validation_normalisation_sensitivity():
     l3_cats = ordered_l3_cats()
     sel_weight_methods = st.session_state.sel_weight_methods
     sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
-    method_ranks = st.session_state.get("last_method_ranks", {})
+    method_ranks = baseline_method_ranks(sel_mcdm_methods)
     multi = len(sel_mcdm_methods) > 1
 
     # --- Alternative normalisation functions ---
@@ -5386,13 +5507,14 @@ def _compute_sensitivity_dashboard(force=False):
 
     winner_info = _resolve_overall_winner(names, method_ranks, methods)
     wi = winner_info["winner_idx"]
+    base_ranks = baseline_method_ranks(methods)
 
     checks = [
         _assess_weight_sensitivity(wi, l3_cats, cat_scores, methods),
-        _assess_bc_sensitivity(wi, l3_cats, methods, method_ranks, sel_wm),
+        _assess_bc_sensitivity(wi, l3_cats, methods, base_ranks, sel_wm),
         _assess_monte_carlo(wi, l3_cats, cat_scores, methods, final_w),
-        _assess_rank_reversal(wi, l3_cats, methods, method_ranks, sel_wm, names),
-        _assess_normalisation(wi, l3_cats, methods, method_ranks, sel_wm),
+        _assess_rank_reversal(wi, l3_cats, methods, base_ranks, sel_wm, names),
+        _assess_normalisation(wi, l3_cats, methods, base_ranks, sel_wm),
         _assess_bootstrap(
             wi, l3_cats, methods, sel_wm,
             n_iter=settings["bs_n_iter"], unc_pct=settings["bs_unc_pct"],
@@ -5818,7 +5940,7 @@ def validation_bc_sensitivity():
     names = st.session_state.proc_names
     sel_weight_methods = st.session_state.sel_weight_methods
     sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
-    method_ranks = st.session_state.get("last_method_ranks", {})
+    method_ranks = baseline_method_ranks(sel_mcdm_methods)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -5991,6 +6113,7 @@ def validation_monte_carlo():
         st.dataframe(wdf, width="stretch")
 
     run_mc = st.button("Run Monte Carlo simulation (10,000 iterations)", type="primary")
+    sig = _verification_signature()
 
     if run_mc:
         n_iter = 10000
@@ -6029,8 +6152,12 @@ def validation_monte_carlo():
         st.session_state.mc_n_iter = n_iter
         st.session_state.mc_methods_used = sel_mcdm_methods
         st.session_state.mc_k_value = k_value
+        st.session_state.mc_sig = sig
 
-    if "mc_rank_counts" in st.session_state:
+    if "mc_rank_counts" in st.session_state and st.session_state.get("mc_sig") != sig:
+        st.info("Inputs have changed since the last Monte Carlo run. "
+                "Click Run Monte Carlo simulation to update the results.")
+    elif "mc_rank_counts" in st.session_state:
         rank_counts = st.session_state.mc_rank_counts
         psi_rank_counts = st.session_state.mc_psi_rank_counts
         n_iter = st.session_state.mc_n_iter
@@ -6083,8 +6210,8 @@ def analytics_category_weighted_contribution():
     l3_cats   = ordered_l3_cats()
     cat_scores = st.session_state.cat_scores
     final_w   = current_final_weights()
-    method_ranks = st.session_state.get("last_method_ranks", {})
     sel_mcdm  = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+    method_ranks = baseline_method_ranks(sel_mcdm)
     multi     = len(sel_mcdm) > 1
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
@@ -6180,8 +6307,8 @@ def analytics_combined_contribution():
     n2_data  = st.session_state.n2_data
     merec_w  = st.session_state.merec_w
     final_w  = current_final_weights()
-    method_ranks = st.session_state.get("last_method_ranks", {})
     sel_mcdm = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
+    method_ranks = baseline_method_ranks(sel_mcdm)
     multi    = len(sel_mcdm) > 1
 
     p_val = st.slider("p value (PSI)", min_value=0.0, max_value=1.0,
@@ -6243,6 +6370,9 @@ def analytics_combined_contribution():
         cat_idx[ck] = idx + 1
 
     for pi, name in enumerate(names):
+        if not (np.isfinite(cat_pct[:, pi]).all() and cat_pct[:, pi].sum() > 0):
+            st.caption(f"{name}: no contribution to chart (its weighted score total is 0).")
+            continue
         apply_mpl_style()
         # Large figure with extra right margin for legend
         fig, ax = plt.subplots(figsize=(10.0, 9.5))
@@ -6422,7 +6552,7 @@ def analytics_leave_one_out():
     cat_scores = st.session_state.cat_scores
     sel_weight_methods = st.session_state.sel_weight_methods
     sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
-    method_ranks = st.session_state.get("last_method_ranks", {})
+    method_ranks = baseline_method_ranks(sel_mcdm_methods)
     multi = len(sel_mcdm_methods) > 1
 
     if len(l3_cats) < 2:
@@ -6530,7 +6660,7 @@ def analytics_indicator_loo():
     cat_scores = st.session_state.cat_scores
     sel_weight_methods = st.session_state.sel_weight_methods
     sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
-    method_ranks = st.session_state.get("last_method_ranks", {})
+    method_ranks = baseline_method_ranks(sel_mcdm_methods)
     multi = len(sel_mcdm_methods) > 1
 
     if not multi:
@@ -6649,7 +6779,7 @@ def analytics_stakeholder_preference():
     l3_cats = ordered_l3_cats()
     cat_scores = st.session_state.cat_scores
     sel_mcdm_methods = list(st.session_state.sel_mcdm_methods) or ALL_MCDM_KEYS
-    method_ranks = st.session_state.get("last_method_ranks", {})
+    method_ranks = baseline_method_ranks(sel_mcdm_methods)
     final_w = current_final_weights()
     multi = len(sel_mcdm_methods) > 1
 
@@ -6666,6 +6796,12 @@ def analytics_stakeholder_preference():
     # ── Category weight sliders ───────────────────────────────────────────────
     st.markdown("**Adjust category weights (%)**")
 
+    # Largest-remainder rounding so the default sliders add up to exactly 100.
+    raw_pct = np.asarray(final_w, dtype=float) * 100
+    defaults = np.floor(raw_pct).astype(int)
+    for i in np.argsort(-(raw_pct - defaults))[:max(0, 100 - int(defaults.sum()))]:
+        defaults[i] += 1
+
     custom_weights = {}
     for ci, ckey in enumerate(l3_cats):
         cat = CATS[ckey]
@@ -6678,7 +6814,7 @@ def analytics_stakeholder_preference():
                 f"{cat['label']}</span>", unsafe_allow_html=True,
             )
         with c2:
-            default_val = int(round(float(final_w[ci]) * 100))
+            default_val = int(defaults[ci])
             val = st.slider(
                 cat["label"], min_value=0, max_value=100,
                 value=st.session_state.get(f"sh_w_{ckey}", default_val),
@@ -6702,9 +6838,17 @@ def analytics_stakeholder_preference():
         st.error("Adjust weights to sum to exactly 100% before running.")
         return
 
-    # ── Run button ────────────────────────────────────────────────────────────
-    if not st.button("Run simulation →", type="primary", key="sh_run"):
-            return
+    # ── Run button: results stay visible until the inputs they used change ──
+    sig = _verification_signature(tuple(custom_weights[c] for c in l3_cats), float(p_val))
+    if st.button("Run simulation →", type="primary", key="sh_run"):
+        st.session_state["sh_results"] = {"sig": sig}
+    res = st.session_state.get("sh_results")
+    if res is None:
+        return
+    if res["sig"] != sig:
+        st.info("Weights or inputs have changed since the last simulation. "
+                "Click Run simulation to update the results.")
+        return
 
     # ── Original ranking ──────────────────────────────────────────────────────
     if multi and method_ranks:
